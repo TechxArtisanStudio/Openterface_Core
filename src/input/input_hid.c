@@ -1,12 +1,15 @@
-#include "keymod_internal.h"
+#include "openterface/input.h"
+#include "input_internal.h"
 
 #include <string.h>
 
-const ascii_entry_t km_ascii_map[96] = {
+/* ── ASCII → HID mapping (printable 0x20–0x7E) ────────────────────────── */
+
+const ascii_entry_t hid_ascii_map[96] = {
     /* 0x20 ' '  */ { 0x2C, 0 },
     /* 0x21 '!'  */ { 0x1E, 1 },
     /* 0x22 '"'  */ { 0x34, 1 },
-    /* 0x23 '#'  */ { 0x35, 1 },
+    /* 0x23 '#'  */ { 0x20, 1 },
     /* 0x24 '$'  */ { 0x21, 1 },
     /* 0x25 '%'  */ { 0x22, 1 },
     /* 0x26 '&'  */ { 0x23, 1 },
@@ -100,7 +103,9 @@ const ascii_entry_t km_ascii_map[96] = {
     /* 0x7E '~'  */ { 0x35, 1 },
 };
 
-const name_entry_t km_name_map[] = {
+/* ── Named key → HID mapping ──────────────────────────────────────────── */
+
+const name_entry_t hid_name_map[] = {
     { "A", 0x04 }, { "B", 0x05 }, { "C", 0x06 }, { "D", 0x07 },
     { "E", 0x08 }, { "F", 0x09 }, { "G", 0x0A }, { "H", 0x0B },
     { "I", 0x0C }, { "J", 0x0D }, { "K", 0x0E }, { "L", 0x0F },
@@ -130,52 +135,53 @@ const name_entry_t km_name_map[] = {
     { "App", 0x65 }, { "ScrollLock", 0x47 }, { "PrtSc", 0x46 }, { "Pause", 0x48 },
 };
 
-const int km_name_map_len = sizeof(km_name_map) / sizeof(km_name_map[0]);
+const int hid_name_map_len = sizeof(hid_name_map) / sizeof(hid_name_map[0]);
 
-int km_ascii_index_for_char(char c) {
+/* ── Internal helpers ─────────────────────────────────────────────────── */
+
+int hid_ascii_index_for_char(char c) {
     if (c < 0x20 || c > 0x7E) return -1;
     return c - 0x20;
 }
 
-int km_lookup_named_key_code(const char *key_name) {
-    for (int index = 0; index < km_name_map_len; index++) {
-        if (strcmp(km_name_map[index].name, key_name) == 0) {
-            return km_name_map[index].code;
+static int hid_lookup_named_key_code(const char *key_name) {
+    for (int i = 0; i < hid_name_map_len; i++) {
+        if (strcmp(hid_name_map[i].name, key_name) == 0) {
+            return hid_name_map[i].code;
         }
     }
     return -1;
 }
 
-const char *km_lookup_named_key_label(uint8_t hid_code) {
-    for (int index = 0; index < km_name_map_len; index++) {
-        if (km_name_map[index].code == hid_code) {
-            return km_name_map[index].name;
+static const char *hid_lookup_named_key_label(uint8_t hid_code) {
+    for (int i = 0; i < hid_name_map_len; i++) {
+        if (hid_name_map[i].code == hid_code) {
+            return hid_name_map[i].name;
         }
     }
     return "Unknown";
 }
 
-int km_hid_code_for_char(char c, int *out_needs_shift) {
-    int idx = km_ascii_index_for_char(c);
+/* ── Public HID lookup API ────────────────────────────────────────────── */
+
+int op_input_hid_code_from_name(const char *key_name) {
+    int idx;
+    if (!key_name || !key_name[0]) return -1;
+    idx = key_name[1] == '\0' ? hid_ascii_index_for_char(key_name[0]) : -1;
+    if (idx >= 0) return hid_ascii_map[idx].hid;
+    return hid_lookup_named_key_code(key_name);
+}
+
+int op_input_hid_code_from_char(char c, int *out_needs_shift) {
+    int idx = hid_ascii_index_for_char(c);
     if (idx < 0) {
         if (out_needs_shift) *out_needs_shift = 0;
         return -1;
     }
-    if (out_needs_shift) *out_needs_shift = km_ascii_map[idx].shift;
-    return km_ascii_map[idx].hid;
+    if (out_needs_shift) *out_needs_shift = hid_ascii_map[idx].shift;
+    return hid_ascii_map[idx].hid;
 }
 
-int km_hid_code(const char *key_name) {
-    int idx;
-
-    if (!key_name || !key_name[0]) return -1;
-
-    idx = key_name[1] == '\0' ? km_ascii_index_for_char(key_name[0]) : -1;
-    if (idx >= 0) return km_ascii_map[idx].hid;
-
-    return km_lookup_named_key_code(key_name);
-}
-
-const char *km_hid_code_label(int hid_code) {
-    return km_lookup_named_key_label((uint8_t)hid_code);
+const char *op_input_hid_code_label(int hid_code) {
+    return hid_lookup_named_key_label((uint8_t)hid_code);
 }

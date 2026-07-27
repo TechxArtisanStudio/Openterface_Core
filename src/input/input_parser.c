@@ -1,14 +1,26 @@
-#include "keymod_internal.h"
-
 #include <stdlib.h>
 #include <string.h>
 
+#include "openterface/input.h"
+#include "input_internal.h"
+
+/* ── Internal parser state ────────────────────────────────────────────── */
+
+typedef struct {
+    op_input_parsed_token_t *out;
+    int count;
+    int max;
+    int active_mods;
+} macro_parse_state_t;
+
+/* ── Modifier token parsing ───────────────────────────────────────────── */
+
 static int parse_modifier_token(const char *tok, int is_closing) {
-    if (strcmp(tok, is_closing ? "</CTRL>" : "<CTRL>") == 0) return KM_MOD_CTRL;
-    if (strcmp(tok, is_closing ? "</SHIFT>" : "<SHIFT>") == 0) return KM_MOD_SHIFT;
-    if (strcmp(tok, is_closing ? "</ALT>" : "<ALT>") == 0) return KM_MOD_ALT;
-    if (strcmp(tok, is_closing ? "</CMD>" : "<CMD>") == 0) return KM_MOD_GUI;
-    if (strcmp(tok, is_closing ? "</WIN>" : "<WIN>") == 0) return KM_MOD_GUI;
+    if (strcmp(tok, is_closing ? "</CTRL>" : "<CTRL>") == 0) return OP_INPUT_MOD_CTRL;
+    if (strcmp(tok, is_closing ? "</SHIFT>" : "<SHIFT>") == 0) return OP_INPUT_MOD_SHIFT;
+    if (strcmp(tok, is_closing ? "</ALT>" : "<ALT>") == 0) return OP_INPUT_MOD_ALT;
+    if (strcmp(tok, is_closing ? "</CMD>" : "<CMD>") == 0) return OP_INPUT_MOD_GUI;
+    if (strcmp(tok, is_closing ? "</WIN>" : "<WIN>") == 0) return OP_INPUT_MOD_GUI;
     return 0;
 }
 
@@ -23,6 +35,8 @@ static int parse_modifier_close(const char *tok) {
 static int is_delay_token(const char *tok) {
     return strncmp(tok, "<DELAY", 6) == 0;
 }
+
+/* ── Tag extraction & special token lookup ────────────────────────────── */
 
 static int extract_tag_inner(const char *tok, char *out, size_t out_size) {
     const char *inner = tok + 1;
@@ -84,6 +98,8 @@ static int special_token_hid(const char *tok) {
     return function_key_hid(buf);
 }
 
+/* ── Token emission ───────────────────────────────────────────────────── */
+
 static void emit_parsed_token(macro_parse_state_t *state, int hid_code, int modifiers) {
     if (hid_code < 0 || state->count >= state->max) return;
     state->out[state->count].hid_code = hid_code;
@@ -91,7 +107,7 @@ static void emit_parsed_token(macro_parse_state_t *state, int hid_code, int modi
     state->count++;
 }
 
-static void parse_single_token(km_parsed_token_t *result, const char *token) {
+static void parse_single_token(op_input_parsed_token_t *result, const char *token) {
     if (parse_modifier_open(token)) return;
     if (parse_modifier_close(token)) return;
     if (is_delay_token(token)) return;
@@ -102,7 +118,7 @@ static void parse_single_token(km_parsed_token_t *result, const char *token) {
     }
 
     if (token[1] == '\0') {
-        result->hid_code = km_hid_code_for_char(token[0], NULL);
+        result->hid_code = op_input_hid_code_from_char(token[0], NULL);
     }
 }
 
@@ -130,8 +146,8 @@ static char normalized_macro_char(char ch) {
 static void parse_macro_char(macro_parse_state_t *state, char ch) {
     int needs_shift = 0;
     int modifiers = state->active_mods;
-    int hid = km_hid_code_for_char(normalized_macro_char(ch), &needs_shift);
-    if (needs_shift) modifiers |= KM_MOD_SHIFT;
+    int hid = op_input_hid_code_from_char(normalized_macro_char(ch), &needs_shift);
+    if (needs_shift) modifiers |= OP_INPUT_MOD_SHIFT;
     emit_parsed_token(state, hid, modifiers);
 }
 
@@ -153,6 +169,8 @@ static void parse_macro_tag(macro_parse_state_t *state, const char *token) {
     emit_parsed_token(state, special_token_hid(token), state->active_mods);
 }
 
+/* ── UTF-8 / script tokenization helpers ──────────────────────────────── */
+
 static int utf8_char_len(unsigned char c) {
     if ((c & 0x80) == 0x00) return 1;
     if ((c & 0xE0) == 0xC0) return 2;
@@ -165,7 +183,7 @@ static int is_script_tag_char(unsigned char c) {
     return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
 }
 
-static int try_parse_script_tag(const char *input, int start, km_script_token_span_t *span) {
+static int try_parse_script_tag(const char *input, int start, op_input_script_token_span_t *span) {
     int cursor = start + 1;
     int tag_start;
 
@@ -184,13 +202,17 @@ static int try_parse_script_tag(const char *input, int start, km_script_token_sp
     return 1;
 }
 
-static void write_script_span(km_script_token_span_t *span, int start, int length) {
+static void write_script_span(op_input_script_token_span_t *span, int start, int length) {
     span->start_utf8 = start;
     span->length_utf8 = length;
 }
 
-km_parsed_token_t km_parse_token(const char *token) {
-    km_parsed_token_t result = { -1, 0 };
+/* ── Public parsing API ───────────────────────────────────────────────── */
+
+op_input_parsed_token_t op_input_parse_token(const char *token) {
+    op_input_parsed_token_t result;
+    result.hid_code = -1;
+    result.modifiers = 0;
 
     if (!token || !token[0]) return result;
 
@@ -198,7 +220,7 @@ km_parsed_token_t km_parse_token(const char *token) {
     return result;
 }
 
-int km_parse_macro(const char *input, km_parsed_token_t out[], int max) {
+int op_input_macro_parse(const char *input, op_input_parsed_token_t out[], int max) {
     macro_parse_state_t state = { out, 0, max, 0 };
     const char *cursor;
 
@@ -220,14 +242,14 @@ int km_parse_macro(const char *input, km_parsed_token_t out[], int max) {
     return state.count;
 }
 
-int km_tokenize_script(const char *input, km_script_token_span_t out[], int max) {
+int op_input_script_tokenize(const char *input, op_input_script_token_span_t out[], int max) {
     int count = 0;
     int index = 0;
 
     if (!input || !out || max <= 0) return 0;
 
     while (input[index] != '\0' && count < max) {
-        km_script_token_span_t span;
+        op_input_script_token_span_t span;
         int start = index;
 
         if (try_parse_script_tag(input, index, &span)) {

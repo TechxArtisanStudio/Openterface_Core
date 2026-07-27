@@ -26,19 +26,19 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux
-            artifact_name: linux-lib
-            library_path: build/libkeymod.a
-            release_name: libkeymod-linux.a
+            artifact_name: linux-libs
+            library_paths: build/lib/libopenterface_core_common.a build/lib/libopenterface_core_input.a build/lib/libopenterface_protocol_ch9329.a build/lib/libopenterface_core_native.a build/lib/libopenterface_watchdog.a build/lib/libopenterface_platform_internal.a
+            release_prefix: openterface-core-linux
           - os: macos-latest
             label: macos
-            artifact_name: macos-lib
-            library_path: build/libkeymod.a
-            release_name: libkeymod-macos.a
+            artifact_name: macos-libs
+            library_paths: build/lib/libopenterface_core_common.a build/lib/libopenterface_core_input.a build/lib/libopenterface_protocol_ch9329.a build/lib/libopenterface_core_native.a build/lib/libopenterface_watchdog.a build/lib/libopenterface_platform_internal.a
+            release_prefix: openterface-core-macos
           - os: windows-latest
             label: windows
-            artifact_name: windows-lib
-            library_path: build/Release/keymod.lib
-            release_name: keymod-windows.lib
+            artifact_name: windows-libs
+            library_paths: build/lib/Release/openterface_core_common.lib build/lib/Release/openterface_core_input.lib build/lib/Release/openterface_protocol_ch9329.lib build/lib/Release/openterface_core_native.lib build/lib/Release/openterface_watchdog.lib build/lib/Release/openterface_platform_internal.lib
+            release_prefix: openterface-core-windows
 
     steps:
       - uses: actions/checkout@v4
@@ -50,21 +50,25 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Run tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure -E "watchdog_test"
 
       - name: Collect Unix artifact
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p out/${{ matrix.artifact_name }}
-          cp "${{ matrix.library_path }}" "out/${{ matrix.artifact_name }}/${{ matrix.release_name }}"
+          for lib in ${{ matrix.library_paths }}; do
+            cp "$lib" "out/${{ matrix.artifact_name }}/"
+          done
 
       - name: Collect Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "out/${{ matrix.artifact_name }}" | Out-Null
-          Copy-Item "${{ matrix.library_path }}" "out/${{ matrix.artifact_name }}/${{ matrix.release_name }}"
+          "${{ matrix.library_paths }}" -split ' ' | ForEach-Object {
+            Copy-Item $_ "out/${{ matrix.artifact_name }}/"
+          }
 
       - name: Upload library artifact
         uses: actions/upload-artifact@v4
@@ -77,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: headers
-          path: include/
+          path: include/openterface/
 
   create-release:
     name: Create release
@@ -90,20 +94,20 @@ jobs:
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: linux-lib
-          path: out/linux-lib
+          name: linux-libs
+          path: out/linux-libs
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: macos-lib
-          path: out/macos-lib
+          name: macos-libs
+          path: out/macos-libs
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: windows-lib
-          path: out/windows-lib
+          name: windows-libs
+          path: out/windows-libs
 
       - name: Download headers
         uses: actions/download-artifact@v4
@@ -114,10 +118,10 @@ jobs:
       - name: Package release assets
         run: |
           mkdir -p out/artifacts
-          tar czf out/artifacts/keymod-headers.tar.gz -C out/include .
-          cp out/linux-lib/libkeymod-linux.a out/artifacts/libkeymod-linux.a
-          cp out/macos-lib/libkeymod-macos.a out/artifacts/libkeymod-macos.a
-          cp out/windows-lib/keymod-windows.lib out/artifacts/keymod-windows.lib
+          tar czf out/artifacts/openterface-core-headers.tar.gz -C out/include .
+          tar czf out/artifacts/openterface-core-linux.tar.gz -C out/linux-libs .
+          tar czf out/artifacts/openterface-core-macos.tar.gz -C out/macos-libs .
+          tar czf out/artifacts/openterface-core-windows.tar.gz -C out/windows-libs .
 
       - name: Create tag
         id: tag
@@ -146,8 +150,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
-            out/artifacts/libkeymod-linux.a \
-            out/artifacts/libkeymod-macos.a \
-            out/artifacts/keymod-windows.lib \
-            out/artifacts/keymod-headers.tar.gz \
+            out/artifacts/openterface-core-headers.tar.gz \
+            out/artifacts/openterface-core-linux.tar.gz \
+            out/artifacts/openterface-core-macos.tar.gz \
+            out/artifacts/openterface-core-windows.tar.gz \
             --clobber

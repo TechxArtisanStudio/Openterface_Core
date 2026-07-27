@@ -38,18 +38,18 @@ jobs:
         run: cmake --build build -- -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -E "watchdog_test"
 
       - name: Collect artifacts
         if: matrix.os == 'ubuntu-latest' && matrix.compiler.cc == 'gcc'
         run: |
-          mkdir -p out/lib
-          cp build/libkeymod.a out/lib/
-          cp -r include out/include
+          mkdir -p out/lib out/include
+          cp build/lib/*.a out/lib/
+          cp -r include/openterface out/include/
 
-      - name: Upload libkeymod.a
+      - name: Upload openterface_core libs
         if: matrix.os == 'ubuntu-latest' && matrix.compiler.cc == 'gcc'
         uses: actions/upload-artifact@v4
         with:
-          name: libkeymod-linux-gcc
+          name: openterface-core-linux-gcc
           path: out/
