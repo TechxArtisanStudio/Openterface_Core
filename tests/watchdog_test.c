@@ -1,28 +1,14 @@
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "openterface/watchdog.h"
+#include "test_helpers.h"
 
 #define TICK_INTERVAL_MS 50u
 
-static int failures = 0;
+int test_failures = 0;
 
-#define ASSERT_EQ_INT(expected, actual, msg) do { \
-    if ((int)(expected) != (int)(actual)) { \
-        fprintf(stderr, "FAIL: %s: expected %d, got %d\n", msg, (int)(expected), (int)(actual)); \
-        failures++; \
-    } \
-} while (0)
-
-#define ASSERT_EQ_STR(expected, actual, msg) do { \
-    if (strcmp((expected), (actual)) != 0) { \
-        fprintf(stderr, "FAIL: %s: expected '%s', got '%s'\n", msg, expected, actual); \
-        failures++; \
-    } \
-} while (0)
-
-/* ── mock transport ────────────────────────────────────────────────── */
+/* -- mock transport -------------------------------------------------- */
 
 typedef struct {
     int opened;
@@ -65,7 +51,7 @@ static op_status_t mock_control(void *context, uint32_t request, const uint8_t *
     return OP_STATUS_NOT_SUPPORTED;
 }
 
-/* ── state tracking callback ──────────────────────────────────────── */
+/* -- state tracking callback ---------------------------------------- */
 
 typedef struct {
     op_connection_state_t last_state;
@@ -82,7 +68,7 @@ static void state_change_cb(const op_connection_event_t *event) {
     tracker->state_change_count++;
 }
 
-/* ── health probe ─────────────────────────────────────────────────── */
+/* -- health probe --------------------------------------------------─ */
 
 static op_status_t mock_health_probe(void *context) {
     mock_transport_context_t *mock = (mock_transport_context_t *)context;
@@ -101,336 +87,259 @@ static void create_mock_transport(op_transport_t *transport, mock_transport_cont
     (void)op_transport_open(transport);
 }
 
-static void create_watchdog_with_config(op_watchdog_t **wd, mock_transport_context_t *mock_ctx,
-                                         uint32_t degrade_threshold, uint32_t recovery_threshold,
-                                         state_tracker_t *tracker) {
-    op_watchdog_config_t config = {0};
-    config.transport = (op_transport_t *)mock_ctx; /* trick: we'll set real transport below */
-    config.degrade_threshold = degrade_threshold;
-    config.recovery_threshold = recovery_threshold;
-    config.max_recovery_attempts = 3;
-    config.health_check_interval_ms = 5000u;
-    config.recovery_delay_ms = 200u;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = tracker;
+/* -- test context: encapsulates all common state -------------------- */
 
-    /* we need to pass a real transport — use a stub one */
+typedef struct {
+    op_transport_t transport;
+    mock_transport_context_t mock;
+    op_watchdog_t *wd;
+    state_tracker_t tracker;
+} watchdog_test_ctx_t;
+
+/* init: zero state + create mock transport */
+static void ctx_init(watchdog_test_ctx_t *ctx) {
+    memset(ctx, 0, sizeof(*ctx));
+    create_mock_transport(&ctx->transport, &ctx->mock);
 }
 
-/* ── test: initial state ──────────────────────────────────────────── */
+/* create_std: create watchdog with standard config (uses state_change_cb) */
+static void ctx_create_std(watchdog_test_ctx_t *ctx,
+                            uint32_t degrade, uint32_t recovery) {
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx->transport;
+    config.degrade_threshold = degrade;
+    config.recovery_threshold = recovery;
+    config.max_recovery_attempts = 3;
+    config.recovery_delay_ms = 200u; /* short delay for fast test cycles */
+    config.state_cb = state_change_cb;
+    config.state_cb_user_data = &ctx->tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx->wd), "create watchdog");
+}
+
+/* destroy: cleanup watchdog */
+static void ctx_destroy(watchdog_test_ctx_t *ctx) {
+    if (ctx->wd) op_watchdog_destroy(ctx->wd);
+}
+
+/* -- test: initial state -------------------------------------------- */
 
 static void test_initial_state(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 3, 5);
 
-    memset(&tracker, 0, sizeof(tracker));
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "initial state is connected");
+    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(ctx.wd), "initial consecutive errors");
+    ASSERT_EQ_INT(0, op_watchdog_total_errors(ctx.wd), "initial total errors");
+    ASSERT_EQ_INT(0, op_watchdog_recovery_attempts(ctx.wd), "initial recovery attempts");
 
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 3;
-    config.recovery_threshold = 5;
-    config.max_recovery_attempts = 3;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "initial state is connected");
-    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(wd), "initial consecutive errors");
-    ASSERT_EQ_INT(0, op_watchdog_total_errors(wd), "initial total errors");
-    ASSERT_EQ_INT(0, op_watchdog_recovery_attempts(wd), "initial recovery attempts");
-
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: error accumulation → degraded ──────────────────────────── */
+/* -- test: error accumulation → degraded ---------------------------- */
 
 static void test_error_degrade_transition(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
-
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 3;
-    config.recovery_threshold = 5;
-    config.max_recovery_attempts = 3;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 3, 5);
 
     /* 1-2 errors: still connected */
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "still connected after 2 errors");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "still connected after 2 errors");
 
     /* 3rd error: should trigger degrade */
-    op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
-    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(wd), "degraded after 3 errors");
-    ASSERT_EQ_INT(3, op_watchdog_consecutive_errors(wd), "consecutive errors = 3");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(ctx.wd), "degraded after 3 errors");
+    ASSERT_EQ_INT(3, op_watchdog_consecutive_errors(ctx.wd), "consecutive errors = 3");
 
     /* 4th error: still degraded (not yet at recovery threshold) */
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(wd), "still degraded after 4 errors");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(ctx.wd), "still degraded after 4 errors");
 
     /* verify state history */
-    ASSERT_EQ_INT(1, tracker.state_change_count, "state changes: only connected→degraded");
-    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, tracker.last_state, "last state is degraded");
+    ASSERT_EQ_INT(1, ctx.tracker.state_change_count, "state changes: only connected→degraded");
+    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, ctx.tracker.last_state, "last state is degraded");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: error accumulation → recovering → disconnected ─────────── */
+/* -- test: error accumulation → recovering → disconnected ----------─ */
 
 static void test_error_recovery_disconnected(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
-
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 2;
-    config.recovery_threshold = 3;
-    config.max_recovery_attempts = 3;
-    config.recovery_delay_ms = 200u;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 2, 3);
 
     /* accumulate errors to trigger recovery */
-    for (int i = 0; i < 3; i++) {
-        op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
+    for (i = 0; i < 3; i++) {
+        op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
     }
-    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(wd), "recovering after 3 errors");
+    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(ctx.wd), "recovering after 3 errors");
 
     /* make open fail so recovery exhausts */
-    mock.open_succeeds = 0;
+    ctx.mock.open_succeeds = 0;
 
     /* tick through recovery cycles */
-    for (int i = 0; i < 50; i++) {
-        op_watchdog_tick(wd, TICK_INTERVAL_MS);
+    for (i = 0; i < 50; i++) {
+        op_watchdog_tick(ctx.wd, TICK_INTERVAL_MS);
     }
 
-    ASSERT_EQ_INT(OP_CONN_STATE_DISCONNECTED, op_watchdog_get_state(wd), "disconnected after recovery exhausted");
-    ASSERT_EQ_INT(3, op_watchdog_recovery_attempts(wd), "recovery attempts = max");
+    ASSERT_EQ_INT(OP_CONN_STATE_DISCONNECTED, op_watchdog_get_state(ctx.wd), "disconnected after recovery exhausted");
+    ASSERT_EQ_INT(3, op_watchdog_recovery_attempts(ctx.wd), "recovery attempts = max");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: recovery succeeds ──────────────────────────────────────── */
+/* -- test: recovery succeeds ---------------------------------------- */
 
 static void test_recovery_succeeds(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
-
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 2;
-    config.recovery_threshold = 3;
-    config.max_recovery_attempts = 3;
-    config.recovery_delay_ms = 200u;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 2, 3);
 
     /* trigger recovery */
-    for (int i = 0; i < 3; i++) {
-        op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
+    for (i = 0; i < 3; i++) {
+        op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
     }
-    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(wd), "recovering");
+    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(ctx.wd), "recovering");
 
     /* transport will reopen successfully (default) */
     /* tick through recovery */
-    for (int i = 0; i < 50; i++) {
-        op_watchdog_tick(wd, TICK_INTERVAL_MS);
+    for (i = 0; i < 50; i++) {
+        op_watchdog_tick(ctx.wd, TICK_INTERVAL_MS);
     }
 
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "recovery succeeded, back to connected");
-    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(wd), "consecutive errors reset");
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "recovery succeeded, back to connected");
+    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(ctx.wd), "consecutive errors reset");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: ok resets error counter ────────────────────────────────── */
+/* -- test: ok resets error counter ---------------------------------- */
 
 static void test_ok_resets_errors(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
-
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 3;
-    config.recovery_threshold = 5;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 3, 5);
 
     /* 2 errors (close to degrade threshold) */
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    ASSERT_EQ_INT(2, op_watchdog_consecutive_errors(wd), "2 consecutive errors");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    ASSERT_EQ_INT(2, op_watchdog_consecutive_errors(ctx.wd), "2 consecutive errors");
 
     /* ok resets counter */
-    op_watchdog_report_ok(wd);
-    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(wd), "errors reset to 0 after ok");
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "still connected");
+    op_watchdog_report_ok(ctx.wd);
+    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(ctx.wd), "errors reset to 0 after ok");
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "still connected");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: degraded → ok → back to connected ──────────────────────── */
+/* -- test: degraded → ok → back to connected ------------------------ */
 
 static void test_degraded_recover_via_ok(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
-
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
-    op_watchdog_config_t config = {0};
-    config.transport = &transport;
-    config.degrade_threshold = 2;
-    config.recovery_threshold = 5;
-    config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 2, 5);
 
     /* trigger degraded */
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(wd), "degraded");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(ctx.wd), "degraded");
 
     /* ok brings back to connected */
-    op_watchdog_report_ok(wd);
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "back to connected via ok");
-    ASSERT_EQ_INT(2, tracker.state_change_count, "two state changes: degrade + recover");
+    op_watchdog_report_ok(ctx.wd);
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "back to connected via ok");
+    ASSERT_EQ_INT(2, ctx.tracker.state_change_count, "two state changes: degrade + recover");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: force reconnect from disconnected ──────────────────────── */
+/* -- test: force reconnect from disconnected ------------------------ */
 
 static void test_force_reconnect(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
 
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
+    /* custom config: max_recovery_attempts = 1 */
     op_watchdog_config_t config = {0};
-    config.transport = &transport;
+    config.transport = &ctx.transport;
     config.degrade_threshold = 1;
     config.recovery_threshold = 2;
     config.max_recovery_attempts = 1;
     config.recovery_delay_ms = 200u;
     config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
 
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    /* make open fail so recovery fails */
+    ctx.mock.open_succeeds = 0;
 
     /* go to disconnected */
-    op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
-    op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
-    for (int i = 0; i < 20; i++) {
-        op_watchdog_tick(wd, TICK_INTERVAL_MS);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    for (i = 0; i < 20; i++) {
+        op_watchdog_tick(ctx.wd, TICK_INTERVAL_MS);
     }
     /* after 2 errors (recovery_threshold) + 1 max recovery attempt, should be disconnected */
-    ASSERT_EQ_INT(OP_CONN_STATE_DISCONNECTED, op_watchdog_get_state(wd), "disconnected");
+    ASSERT_EQ_INT(OP_CONN_STATE_DISCONNECTED, op_watchdog_get_state(ctx.wd), "disconnected");
 
     /* force reconnect */
-    mock.open_succeeds = 1;
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_force_reconnect(wd), "force reconnect ok");
-    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(wd), "state is recovering");
+    ctx.mock.open_succeeds = 1;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_force_reconnect(ctx.wd), "force reconnect ok");
+    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(ctx.wd), "state is recovering");
 
     /* tick through recovery */
-    for (int i = 0; i < 50; i++) {
-        op_watchdog_tick(wd, TICK_INTERVAL_MS);
+    for (i = 0; i < 50; i++) {
+        op_watchdog_tick(ctx.wd, TICK_INTERVAL_MS);
     }
-    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(wd), "back to connected after force reconnect");
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "back to connected after force reconnect");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: health probe failure triggers errors ───────────────────── */
+/* -- test: health probe failure triggers errors --------------------─ */
 
 static void test_health_probe_failure(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
-    state_tracker_t tracker = {0};
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
 
-    memset(&tracker, 0, sizeof(tracker));
-
-    create_mock_transport(&transport, &mock);
-
+    /* custom config: health probe enabled */
     op_watchdog_config_t config = {0};
-    config.transport = &transport;
+    config.transport = &ctx.transport;
     config.degrade_threshold = 1;
     config.recovery_threshold = 2;
     config.health_check_interval_ms = 100u; /* very short for test */
     config.health_probe = mock_health_probe;
-    config.health_probe_context = &mock;
+    config.health_probe_context = &ctx.mock;
     config.state_cb = state_change_cb;
-    config.state_cb_user_data = &tracker;
-
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
 
     /* make probe fail */
-    mock.probe_succeeds = 0;
-    mock.probe_status = OP_STATUS_TIMEOUT;
+    ctx.mock.probe_succeeds = 0;
+    ctx.mock.probe_status = OP_STATUS_TIMEOUT;
 
     /* tick to trigger health check */
-    op_watchdog_tick(wd, 150u); /* > health_check_interval_ms */
+    op_watchdog_tick(ctx.wd, 150u); /* > health_check_interval_ms */
 
     /* health probe failure should have been reported */
-    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(wd), "degraded from health probe failure");
+    ASSERT_EQ_INT(OP_CONN_STATE_DEGRADED, op_watchdog_get_state(ctx.wd), "degraded from health probe failure");
 
     /* make probe succeed again */
-    mock.probe_succeeds = 1;
-    op_watchdog_tick(wd, 200u); /* trigger another health check */
+    ctx.mock.probe_succeeds = 1;
+    op_watchdog_tick(ctx.wd, 200u); /* trigger another health check */
     /* the health check will now succeed, but we need to verify */
-    ASSERT_EQ_INT(1, op_watchdog_consecutive_errors(wd), "error count from first probe");
+    ASSERT_EQ_INT(1, op_watchdog_consecutive_errors(ctx.wd), "error count from first probe");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
-/* ── test: state labels ───────────────────────────────────────────── */
+/* -- test: state labels --------------------------------------------─ */
 
 static void test_state_labels(void) {
     ASSERT_EQ_STR("connected", op_connection_state_label(OP_CONN_STATE_CONNECTED), "connected label");
@@ -439,7 +348,7 @@ static void test_state_labels(void) {
     ASSERT_EQ_STR("disconnected", op_connection_state_label(OP_CONN_STATE_DISCONNECTED), "disconnected label");
 }
 
-/* ── test: null safety ────────────────────────────────────────────── */
+/* -- test: null safety ---------------------------------------------- */
 
 static void test_null_safety(void) {
     ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_create(NULL, NULL), "null config");
@@ -454,52 +363,52 @@ static void test_null_safety(void) {
     ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_force_reconnect(NULL), "null force");
 }
 
-/* ── test: total errors persist across ok ─────────────────────────── */
+/* -- test: total errors persist across ok --------------------------─ */
 
 static void test_total_errors_persist(void) {
-    op_transport_t transport;
-    mock_transport_context_t mock;
-    op_watchdog_t *wd = NULL;
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
 
-    create_mock_transport(&transport, &mock);
-
+    /* custom config: no callback, high thresholds */
     op_watchdog_config_t config = {0};
-    config.transport = &transport;
+    config.transport = &ctx.transport;
     config.degrade_threshold = 10;
     config.recovery_threshold = 20;
     config.state_cb = NULL;
 
-    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &wd), "create watchdog");
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
 
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    op_watchdog_report_error(wd, OP_STATUS_IO_ERROR);
-    op_watchdog_report_ok(wd); /* resets consecutive */
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_ok(ctx.wd); /* resets consecutive */
 
-    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(wd), "consecutive reset");
-    ASSERT_EQ_INT(2, op_watchdog_total_errors(wd), "total persists");
+    ASSERT_EQ_INT(0, op_watchdog_consecutive_errors(ctx.wd), "consecutive reset");
+    ASSERT_EQ_INT(2, op_watchdog_total_errors(ctx.wd), "total persists");
 
-    op_watchdog_report_error(wd, OP_STATUS_TIMEOUT);
-    ASSERT_EQ_INT(1, op_watchdog_consecutive_errors(wd), "consecutive after ok");
-    ASSERT_EQ_INT(3, op_watchdog_total_errors(wd), "total incremented");
+    op_watchdog_report_error(ctx.wd, OP_STATUS_TIMEOUT);
+    ASSERT_EQ_INT(1, op_watchdog_consecutive_errors(ctx.wd), "consecutive after ok");
+    ASSERT_EQ_INT(3, op_watchdog_total_errors(ctx.wd), "total incremented");
 
-    op_watchdog_destroy(wd);
+    ctx_destroy(&ctx);
 }
 
 int main(void) {
-    test_initial_state();
-    test_error_degrade_transition();
-    test_error_recovery_disconnected();
-    test_recovery_succeeds();
-    test_ok_resets_errors();
-    test_degraded_recover_via_ok();
-    test_force_reconnect();
-    test_health_probe_failure();
-    test_state_labels();
-    test_null_safety();
-    test_total_errors_persist();
+    printf("Running watchdog tests...\n");
 
-    if (failures != 0) {
-        fprintf(stderr, "watchdog_test: %d failure(s)\n", failures);
+    RUN_TEST(test_initial_state);
+    RUN_TEST(test_error_degrade_transition);
+    RUN_TEST(test_error_recovery_disconnected);
+    RUN_TEST(test_recovery_succeeds);
+    RUN_TEST(test_ok_resets_errors);
+    RUN_TEST(test_degraded_recover_via_ok);
+    RUN_TEST(test_force_reconnect);
+    RUN_TEST(test_health_probe_failure);
+    RUN_TEST(test_state_labels);
+    RUN_TEST(test_null_safety);
+    RUN_TEST(test_total_errors_persist);
+
+    if (test_failures != 0) {
+        fprintf(stderr, "watchdog_test: %d failure(s)\n", test_failures);
         return 1;
     }
 

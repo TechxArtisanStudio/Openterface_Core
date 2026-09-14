@@ -3,7 +3,7 @@
 
 #include "openterface/capability.h"
 #include "openterface/chip.h"
-#include "openterface/core_native.h"
+#include "openterface/native_entry.h"
 #include "openterface/device.h"
 #include "openterface/hid.h"
 #include "openterface/input.h"

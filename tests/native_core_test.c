@@ -1,8 +1,8 @@
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "openterface/core_native.h"
+#include "openterface/native_entry.h"
+#include "test_helpers.h"
 
 #define TEST_PROTOCOL_CH9329 (1u << 0)
 #define TEST_PROTOCOL_CH32V208 (1u << 1)
@@ -18,21 +18,7 @@
 #define TEST_CH9329_PKT_USB_SWITCH_SIZE 11u
 #define TEST_CH9329_PKT_USB_SWITCH_RESPONSE_SIZE 7u
 
-static int failures = 0;
-
-#define ASSERT_TRUE(expr, msg) do { \
-    if (!(expr)) { \
-        fprintf(stderr, "FAIL: %s\n", msg); \
-        failures++; \
-    } \
-} while (0)
-
-#define ASSERT_EQ_INT(expected, actual, msg) do { \
-    if ((expected) != (actual)) { \
-        fprintf(stderr, "FAIL: %s: expected %d, got %d\n", msg, (int)(expected), (int)(actual)); \
-        failures++; \
-    } \
-} while (0)
+int test_failures = 0;
 
 typedef struct {
     int opened;
@@ -542,23 +528,25 @@ static void test_native_serial_transport_backend(void) {
 }
 
 int main(void) {
-    test_device_helpers();
-    test_chip_detection();
-    test_controller_detect();
-    test_hid_stub_register_access();
-    test_video_status_helpers();
-    test_video_status_live_poll();
-    test_usb_mode_switch();
-    test_usb_mode_switch_legacy_firmware();
-    test_usb_mode_requires_capability();
-    test_usb_mode_serial_provider();
-    test_usb_mode_serial_requires_transport();
-    test_usb_mode_endpoint_bind_controller();
-    test_native_core_metadata();
-    test_native_serial_transport_backend();
+    printf("Running native_core tests...\n");
 
-    if (failures != 0) {
-        fprintf(stderr, "native_core_test: %d failure(s)\n", failures);
+    RUN_TEST(test_device_helpers);
+    RUN_TEST(test_chip_detection);
+    RUN_TEST(test_controller_detect);
+    RUN_TEST(test_hid_stub_register_access);
+    RUN_TEST(test_video_status_helpers);
+    RUN_TEST(test_video_status_live_poll);
+    RUN_TEST(test_usb_mode_switch);
+    RUN_TEST(test_usb_mode_switch_legacy_firmware);
+    RUN_TEST(test_usb_mode_requires_capability);
+    RUN_TEST(test_usb_mode_serial_provider);
+    RUN_TEST(test_usb_mode_serial_requires_transport);
+    RUN_TEST(test_usb_mode_endpoint_bind_controller);
+    RUN_TEST(test_native_core_metadata);
+    RUN_TEST(test_native_serial_transport_backend);
+
+    if (test_failures != 0) {
+        fprintf(stderr, "native_core_test: %d failure(s)\n", test_failures);
         return 1;
     }
 

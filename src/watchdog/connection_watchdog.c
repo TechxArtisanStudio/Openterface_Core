@@ -173,7 +173,7 @@ void op_watchdog_tick(op_watchdog_t *wd, uint32_t elapsed_ms) {
                             /* reopen succeeded, verify with health probe */
                             status = op_watchdog_run_health_probe(wd);
                         }
-                        if (status == OP_STATUS_OK && wd->recovery_attempts < wd->max_recovery_attempts) {
+                        if (status == OP_STATUS_OK) {
                             op_watchdog_reset_to_connected(wd);
                         } else {
                             wd->recovery_attempts++;

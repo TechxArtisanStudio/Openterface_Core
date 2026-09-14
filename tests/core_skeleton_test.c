@@ -2,22 +2,9 @@
 #include <string.h>
 
 #include "openterface/core.h"
+#include "test_helpers.h"
 
-static int failures = 0;
-
-#define ASSERT_TRUE(expr, msg) do { \
-    if (!(expr)) { \
-        fprintf(stderr, "FAIL: %s\n", msg); \
-        failures++; \
-    } \
-} while (0)
-
-#define ASSERT_EQ_INT(expected, actual, msg) do { \
-    if ((expected) != (actual)) { \
-        fprintf(stderr, "FAIL: %s: expected %d, got %d\n", msg, (int)(expected), (int)(actual)); \
-        failures++; \
-    } \
-} while (0)
+int test_failures = 0;
 
 static op_status_t dummy_open(void *context) {
     int *opened = (int *)context;
@@ -174,15 +161,17 @@ static void test_transport(void) {
 }
 
 int main(void) {
-    test_version();
-    test_capabilities();
-    test_profiles();
-    test_input_protocol_wrappers();
-    test_usb_switch_protocol();
-    test_transport();
+    printf("Running core_skeleton tests...\n");
 
-    if (failures != 0) {
-        fprintf(stderr, "core_skeleton_test: %d failure(s)\n", failures);
+    RUN_TEST(test_version);
+    RUN_TEST(test_capabilities);
+    RUN_TEST(test_profiles);
+    RUN_TEST(test_input_protocol_wrappers);
+    RUN_TEST(test_usb_switch_protocol);
+    RUN_TEST(test_transport);
+
+    if (test_failures != 0) {
+        fprintf(stderr, "core_skeleton_test: %d failure(s)\n", test_failures);
         return 1;
     }
 

@@ -1,4 +1,4 @@
-#include "openterface/core_native.h"
+#include "openterface/native_entry.h"
 
 #include "platform_backend.h"
 
