@@ -2,7 +2,7 @@
 #define OPENTERFACE_HID_INTERNAL_H
 
 #include "openterface/hid.h"
-#include "platform_backend.h"
+#include "openterface/platform_backend.h"
 
 struct op_hid_device_session_t {
     op_device_info_t device;

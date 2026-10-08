@@ -1,8 +1,25 @@
 #include "openterface/native_entry.h"
 
-#include "platform_backend.h"
-
 #include <stdlib.h>
+
+/* Global storage for registered platform backends */
+static const op_platform_backends_t *g_platform_backends = NULL;
+
+op_status_t op_core_register_platform_backends(const op_platform_backends_t *backends) {
+    if (backends == NULL || backends->hid_backend == NULL || backends->serial_backend == NULL) {
+        return OP_STATUS_INVALID_ARGUMENT;
+    }
+    g_platform_backends = backends;
+    return OP_STATUS_OK;
+}
+
+const op_platform_hid_backend_t *op_core_get_hid_backend(void) {
+    return g_platform_backends ? g_platform_backends->hid_backend : NULL;
+}
+
+const op_platform_serial_backend_t *op_core_get_serial_backend(void) {
+    return g_platform_backends ? g_platform_backends->serial_backend : NULL;
+}
 
 typedef struct {
     const op_platform_serial_backend_t *backend;
@@ -70,11 +87,12 @@ op_version_t op_core_native_version(void) {
 }
 
 const char *op_core_native_hid_backend_name(void) {
-    return op_platform_get_hid_backend_name();
+    return "platform";
 }
 
 const char *op_core_native_serial_backend_name(const op_device_info_t *device) {
-    return op_platform_get_serial_backend_name_for_device(device);
+    (void)device;
+    return "platform";
 }
 
 op_status_t op_native_transport_init_serial(op_transport_t *transport, const op_device_info_t *device) {
@@ -85,7 +103,7 @@ op_status_t op_native_transport_init_serial(op_transport_t *transport, const op_
         return OP_STATUS_INVALID_ARGUMENT;
     }
 
-    backend = op_platform_get_serial_backend_for_device(device);
+    backend = op_core_get_serial_backend();
     if (backend == NULL || backend->create_context == NULL) {
         return OP_STATUS_NOT_SUPPORTED;
     }

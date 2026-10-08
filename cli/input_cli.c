@@ -14,32 +14,32 @@ static void demo_keyboard(void) {
 
     /* 'A' key */
     uint8_t pkt[OP_INPUT_PKT_KEYBOARD_SIZE];
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, (uint8_t[]){ 0x04 }, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, (uint8_t[]){ 0x04 }, 1, OP_INPUT_KB_FLAG_NONE);
     print_hex("'A' press:", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
     /* Ctrl+C */
     uint8_t keys[6] = { 0x06, 0, 0, 0, 0, 0 };
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL, keys, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL, keys, 1, OP_INPUT_KB_FLAG_NONE);
     print_hex("Ctrl+C:", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
     /* Cmd+V (macOS paste) */
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_GUI, keys, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_GUI, keys, 1, OP_INPUT_KB_FLAG_NONE);
     keys[0] = 0x19; /* V */
     print_hex("Cmd+V:", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
     /* Key release */
     uint8_t zeros[6] = { 0 };
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, zeros, 0);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, zeros, 0, OP_INPUT_KB_FLAG_NONE);
     print_hex("Release all:", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
     /* Multi-key: Ctrl+Alt+Del */
     keys[0] = 0x4C; /* Delete */
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_ALT, keys, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_ALT, keys, 1, OP_INPUT_KB_FLAG_NONE);
     print_hex("Ctrl+Alt+Del:", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
     /* Press + release combined */
     uint8_t pr[2 * OP_INPUT_PKT_KEYBOARD_SIZE];
-    int n = op_input_build_press_release(pr, OP_INPUT_MOD_NONE, 0x28); /* Enter */
+    int n = op_input_build_press_release(pr, OP_INPUT_MOD_NONE, 0x28, OP_INPUT_KB_FLAG_NONE); /* Enter */
     printf("\nPress+Release Enter (%d bytes):\n", n);
     print_hex("  press:",  pr, OP_INPUT_PKT_KEYBOARD_SIZE);
     print_hex("  release:", pr + OP_INPUT_PKT_KEYBOARD_SIZE, OP_INPUT_PKT_KEYBOARD_SIZE);
@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
         int code = op_input_hid_code_from_name(argv[1]);
         if (code >= 0) {
             uint8_t pkt[OP_INPUT_PKT_KEYBOARD_SIZE];
-            op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, (uint8_t[]){ (uint8_t)code }, 1);
+            op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, (uint8_t[]){ (uint8_t)code }, 1, OP_INPUT_KB_FLAG_NONE);
             print_hex(argv[1], pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
             return 0;
         }
@@ -161,14 +161,14 @@ int main(int argc, char *argv[]) {
             for (int i = 0; i < n; i++) {
                 uint8_t pkt[OP_INPUT_PKT_KEYBOARD_SIZE];
                 uint8_t keys[6] = { (uint8_t)tokens[i].hid_code };
-                op_input_build_keyboard(pkt, tokens[i].modifiers, keys, 1);
+                op_input_build_keyboard(pkt, tokens[i].modifiers, keys, 1, OP_INPUT_KB_FLAG_NONE);
                 char label[64];
                 snprintf(label, sizeof(label), "macro[%d]", i);
                 print_hex(label, pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
 
                 /* Release */
                 uint8_t zeros[6] = { 0 };
-                op_input_build_keyboard(pkt, 0x00, zeros, 0);
+                op_input_build_keyboard(pkt, 0x00, zeros, 0, OP_INPUT_KB_FLAG_NONE);
                 print_hex("release", pkt, OP_INPUT_PKT_KEYBOARD_SIZE);
             }
             return 0;

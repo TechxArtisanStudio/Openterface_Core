@@ -71,6 +71,17 @@ extern int test_failures;
     } \
 } while (0)
 
+/* Float equality check with tolerance */
+#define ASSERT_EQ_FLOAT(expected, actual, tolerance, msg) do { \
+    float _diff = (expected) - (actual); \
+    if (_diff < 0) _diff = -_diff; \
+    if (_diff > (tolerance)) { \
+        fprintf(stderr, "  FAIL: %s: expected %.4f, got %.4f (tolerance %.4f)\n", \
+                msg, (double)(expected), (double)(actual), (double)(tolerance)); \
+        test_failures++; \
+    } \
+} while (0)
+
 /* Run a single test function and report pass/fail */
 #define RUN_TEST(fn) do { \
     int _before = test_failures; \

@@ -361,6 +361,12 @@ static void test_null_safety(void) {
     ASSERT_EQ_INT(0, op_watchdog_total_errors(NULL), "null total");
     ASSERT_EQ_INT(0, op_watchdog_recovery_attempts(NULL), "null recovery");
     ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_force_reconnect(NULL), "null force");
+
+    /* Backoff null safety */
+    ASSERT_EQ_INT(0, op_watchdog_current_backoff_interval(NULL), "null backoff interval");
+    ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_get_backoff_config(NULL, NULL), "null get config");
+    ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_configure_backoff(NULL, NULL), "null configure backoff");
+    op_watchdog_reset_backoff(NULL);  /* Should not crash */
 }
 
 /* -- test: total errors persist across ok --------------------------─ */
@@ -392,6 +398,274 @@ static void test_total_errors_persist(void) {
     ctx_destroy(&ctx);
 }
 
+/* -- test: exponential backoff configuration ------------------------- */
+
+static void test_backoff_config(void) {
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+
+    /* Test 1: With recovery_delay_ms set (backward compatibility) */
+    ctx_create_std(&ctx, 2, 3);
+    op_watchdog_backoff_config_t backoff_config;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_get_backoff_config(ctx.wd, &backoff_config), "get backoff config");
+    /* When recovery_delay_ms is set but backoff is not, it should use recovery_delay_ms as fixed delay */
+    ASSERT_EQ_INT(200, backoff_config.base_interval_ms, "base from recovery_delay_ms");
+    ASSERT_EQ_INT(200, backoff_config.max_interval_ms, "max equals base (fixed delay)");
+    ASSERT_EQ_FLOAT(1.0f, backoff_config.multiplier, 0.01f, "multiplier 1.0 (no backoff)");
+    ASSERT_EQ_INT(200, op_watchdog_current_backoff_interval(ctx.wd), "initial backoff from recovery_delay_ms");
+    ctx_destroy(&ctx);
+
+    /* Test 2: With explicit backoff config */
+    ctx_init(&ctx);
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx.transport;
+    config.degrade_threshold = 2;
+    config.recovery_threshold = 3;
+    config.backoff.base_interval_ms = 500u;
+    config.backoff.max_interval_ms = 5000u;
+    config.backoff.multiplier = 2.0f;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_get_backoff_config(ctx.wd, &backoff_config), "get explicit config");
+    ASSERT_EQ_INT(500, backoff_config.base_interval_ms, "explicit base");
+    ASSERT_EQ_INT(5000, backoff_config.max_interval_ms, "explicit max");
+    ASSERT_EQ_FLOAT(2.0f, backoff_config.multiplier, 0.01f, "explicit multiplier");
+    ASSERT_EQ_INT(500, op_watchdog_current_backoff_interval(ctx.wd), "initial backoff from explicit config");
+    ctx_destroy(&ctx);
+
+    /* Test 3: Default values (no recovery_delay_ms, no backoff) */
+    ctx_init(&ctx);
+    op_watchdog_config_t default_config = {0};
+    default_config.transport = &ctx.transport;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&default_config, &ctx.wd), "create with defaults");
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_get_backoff_config(ctx.wd, &backoff_config), "get default config");
+    ASSERT_EQ_INT(OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS, backoff_config.base_interval_ms, "default base");
+    ASSERT_EQ_INT(OP_WATCHDOG_BACKOFF_DEFAULT_MAX_MS, backoff_config.max_interval_ms, "default max");
+    ASSERT_EQ_FLOAT(OP_WATCHDOG_BACKOFF_DEFAULT_MULTIPLIER, backoff_config.multiplier, 0.01f, "default multiplier");
+    ctx_destroy(&ctx);
+}
+
+/* -- test: exponential backoff progression --------------------------- */
+
+static void test_backoff_progression(void) {
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+
+    /* Custom config with short delays for testing */
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx.transport;
+    config.degrade_threshold = 1;
+    config.recovery_threshold = 2;
+    config.max_recovery_attempts = 5;
+    config.backoff.base_interval_ms = 100u;
+    config.backoff.max_interval_ms = 1000u;
+    config.backoff.multiplier = 2.0f;
+    config.state_cb = state_change_cb;
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
+
+    /* Initial backoff should be 100ms */
+    ASSERT_EQ_INT(100, op_watchdog_current_backoff_interval(ctx.wd), "initial backoff 100ms");
+
+    /* Trigger recovery */
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    ASSERT_EQ_INT(OP_CONN_STATE_RECOVERING, op_watchdog_get_state(ctx.wd), "recovering");
+
+    /* Make open fail to increment backoff */
+    ctx.mock.open_succeeds = 0;
+
+    /* Tick through first recovery attempt */
+    for (i = 0; i < 20; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+    /* After first failure, backoff should increase to 200ms */
+    ASSERT_EQ_INT(200, op_watchdog_current_backoff_interval(ctx.wd), "backoff after 1st failure");
+
+    /* Continue ticking to trigger second attempt */
+    for (i = 0; i < 30; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+    /* After second failure, backoff should increase to 400ms */
+    ASSERT_EQ_INT(400, op_watchdog_current_backoff_interval(ctx.wd), "backoff after 2nd failure");
+
+    ctx_destroy(&ctx);
+}
+
+/* -- test: backoff reset on success ---------------------------------- */
+
+static void test_backoff_reset_on_success(void) {
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx.transport;
+    config.degrade_threshold = 1;
+    config.recovery_threshold = 2;
+    config.max_recovery_attempts = 3;
+    config.backoff.base_interval_ms = 100u;
+    config.backoff.max_interval_ms = 1000u;
+    config.backoff.multiplier = 2.0f;
+    config.state_cb = state_change_cb;
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
+
+    /* Trigger recovery */
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+
+    /* Make open fail once */
+    ctx.mock.open_succeeds = 0;
+    for (i = 0; i < 20; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+    ASSERT_EQ_INT(200, op_watchdog_current_backoff_interval(ctx.wd), "backoff increased");
+
+    /* Now make open succeed */
+    ctx.mock.open_succeeds = 1;
+    for (i = 0; i < 30; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+
+    /* Backoff should reset to base */
+    ASSERT_EQ_INT(100, op_watchdog_current_backoff_interval(ctx.wd), "backoff reset to base");
+    ASSERT_EQ_INT(OP_CONN_STATE_CONNECTED, op_watchdog_get_state(ctx.wd), "back to connected");
+
+    ctx_destroy(&ctx);
+}
+
+/* -- test: backoff max cap ------------------------------------------- */
+
+static void test_backoff_max_cap(void) {
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx.transport;
+    config.degrade_threshold = 1;
+    config.recovery_threshold = 2;
+    config.max_recovery_attempts = 10;
+    config.backoff.base_interval_ms = 100u;
+    config.backoff.max_interval_ms = 500u; /* Low max for testing */
+    config.backoff.multiplier = 10.0f;     /* High multiplier to hit max quickly */
+    config.state_cb = state_change_cb;
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
+
+    /* Trigger recovery */
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+
+    /* Make open fail repeatedly */
+    ctx.mock.open_succeeds = 0;
+
+    /* After first failure: 100 * 10 = 1000, capped at 500 */
+    for (i = 0; i < 20; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+    ASSERT_EQ_INT(500, op_watchdog_current_backoff_interval(ctx.wd), "backoff capped at max");
+
+    ctx_destroy(&ctx);
+}
+
+/* -- test: runtime backoff reconfiguration --------------------------- */
+
+static void test_backoff_runtime_config(void) {
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 2, 3);
+
+    /* Change backoff config at runtime */
+    op_watchdog_backoff_config_t new_config = {
+        .base_interval_ms = 500u,
+        .max_interval_ms = 5000u,
+        .multiplier = 3.0f
+    };
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_configure_backoff(ctx.wd, &new_config), "configure backoff");
+
+    /* Verify new config */
+    op_watchdog_backoff_config_t retrieved_config;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_get_backoff_config(ctx.wd, &retrieved_config), "get config");
+    ASSERT_EQ_INT(500, retrieved_config.base_interval_ms, "new base");
+    ASSERT_EQ_INT(5000, retrieved_config.max_interval_ms, "new max");
+    ASSERT_EQ_FLOAT(3.0f, retrieved_config.multiplier, 0.01f, "new multiplier");
+
+    /* Current backoff should reflect new base */
+    ASSERT_EQ_INT(500, op_watchdog_current_backoff_interval(ctx.wd), "current backoff updated");
+
+    /* Reset to defaults */
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_configure_backoff(ctx.wd, NULL), "reset to defaults");
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_get_backoff_config(ctx.wd, &retrieved_config), "get default config");
+    ASSERT_EQ_INT(OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS, retrieved_config.base_interval_ms, "default base restored");
+
+    ctx_destroy(&ctx);
+}
+
+/* -- test: manual backoff reset -------------------------------------- */
+
+static void test_backoff_manual_reset(void) {
+    watchdog_test_ctx_t ctx;
+    int i;
+    ctx_init(&ctx);
+
+    op_watchdog_config_t config = {0};
+    config.transport = &ctx.transport;
+    config.degrade_threshold = 1;
+    config.recovery_threshold = 2;
+    config.max_recovery_attempts = 5;
+    config.backoff.base_interval_ms = 100u;
+    config.backoff.max_interval_ms = 1000u;
+    config.backoff.multiplier = 2.0f;
+    config.state_cb = state_change_cb;
+    config.state_cb_user_data = &ctx.tracker;
+    ASSERT_EQ_INT(OP_STATUS_OK, op_watchdog_create(&config, &ctx.wd), "create watchdog");
+
+    /* Trigger recovery and fail once to increase backoff */
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    op_watchdog_report_error(ctx.wd, OP_STATUS_IO_ERROR);
+    ctx.mock.open_succeeds = 0;
+    for (i = 0; i < 20; i++) {
+        op_watchdog_tick(ctx.wd, 10u);
+    }
+    ASSERT_EQ_INT(200, op_watchdog_current_backoff_interval(ctx.wd), "backoff increased");
+
+    /* Manually reset backoff */
+    op_watchdog_reset_backoff(ctx.wd);
+    ASSERT_EQ_INT(100, op_watchdog_current_backoff_interval(ctx.wd), "backoff reset manually");
+
+    ctx_destroy(&ctx);
+}
+
+/* -- test: invalid backoff config ------------------------------------ */
+
+static void test_backoff_invalid_config(void) {
+    watchdog_test_ctx_t ctx;
+    ctx_init(&ctx);
+    ctx_create_std(&ctx, 2, 3);
+
+    /* Invalid: base > max */
+    op_watchdog_backoff_config_t invalid_config = {
+        .base_interval_ms = 1000u,
+        .max_interval_ms = 100u,
+        .multiplier = 2.0f
+    };
+    ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_configure_backoff(ctx.wd, &invalid_config), "base > max rejected");
+
+    /* Invalid: zero base */
+    invalid_config.base_interval_ms = 0;
+    invalid_config.max_interval_ms = 1000u;
+    ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_configure_backoff(ctx.wd, &invalid_config), "zero base rejected");
+
+    /* Invalid: zero multiplier */
+    invalid_config.base_interval_ms = 100u;
+    invalid_config.multiplier = 0.0f;
+    ASSERT_EQ_INT(OP_STATUS_INVALID_ARGUMENT, op_watchdog_configure_backoff(ctx.wd, &invalid_config), "zero multiplier rejected");
+
+    ctx_destroy(&ctx);
+}
+
 int main(void) {
     printf("Running watchdog tests...\n");
 
@@ -406,6 +680,13 @@ int main(void) {
     RUN_TEST(test_state_labels);
     RUN_TEST(test_null_safety);
     RUN_TEST(test_total_errors_persist);
+    RUN_TEST(test_backoff_config);
+    RUN_TEST(test_backoff_progression);
+    RUN_TEST(test_backoff_reset_on_success);
+    RUN_TEST(test_backoff_max_cap);
+    RUN_TEST(test_backoff_runtime_config);
+    RUN_TEST(test_backoff_manual_reset);
+    RUN_TEST(test_backoff_invalid_config);
 
     if (test_failures != 0) {
         fprintf(stderr, "watchdog_test: %d failure(s)\n", test_failures);

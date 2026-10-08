@@ -35,7 +35,7 @@ static void test_keyboard_packet(void) {
 
     /* 'A' with no modifiers */
     uint8_t keys[6] = { 0x04, 0, 0, 0, 0, 0 };
-    int len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1);
+    int len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(OP_INPUT_PKT_KEYBOARD_SIZE, len, "keyboard packet length");
     ASSERT_EQ_INT(0x57, pkt[0], "header byte 0");
     ASSERT_EQ_INT(0xAB, pkt[1], "header byte 1");
@@ -47,13 +47,13 @@ static void test_keyboard_packet(void) {
 
     /* Ctrl+C */
     keys[0] = 0x06;
-    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL, keys, 1);
+    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL, keys, 1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x01, pkt[5], "Ctrl modifier");
     ASSERT_EQ_INT(0x06, pkt[7], "key slot 1 = C");
 
     /* Multi-key: Ctrl+Shift+A+B */
     uint8_t multi[6] = { 0x04, 0x05, 0, 0, 0, 0 };
-    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_SHIFT, multi, 2);
+    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_SHIFT, multi, 2, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x03, pkt[5], "Ctrl|Shift modifiers");
     ASSERT_EQ_INT(0x04, pkt[7], "key A");
     ASSERT_EQ_INT(0x05, pkt[8], "key B");
@@ -61,13 +61,13 @@ static void test_keyboard_packet(void) {
 
     /* Exactly 6 keys fills all slots */
     uint8_t six[6] = { 0x04, 0x05, 0x06, 0x07, 0x08, 0x09 };
-    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, six, 6);
+    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, six, 6, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x04, pkt[7],  "slot 1");
     ASSERT_EQ_INT(0x09, pkt[12], "slot 6 (last key slot)");
 
     /* More than 6 keys — extras silently dropped */
     uint8_t seven[7] = { 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A };
-    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7);
+    len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x09, pkt[12], "7th key dropped, slot 6 unchanged");
 
     /* Verify checksum is non-zero (actual value depends on packet content) */
@@ -145,7 +145,7 @@ static void test_mouse_abs_packet(void) {
 
 static void test_press_release(void) {
     uint8_t out[2 * OP_INPUT_PKT_KEYBOARD_SIZE];
-    int len = op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x28 /* Enter */);
+    int len = op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x28 /* Enter */, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(2 * OP_INPUT_PKT_KEYBOARD_SIZE, len, "press+release length");
 
     /* Press */
@@ -153,33 +153,6 @@ static void test_press_release(void) {
     /* Release */
     ASSERT_EQ_INT(0x00, out[OP_INPUT_PKT_KEYBOARD_SIZE + 5], "release modifiers = 0");
     ASSERT_EQ_INT(0x00, out[OP_INPUT_PKT_KEYBOARD_SIZE + 7], "release key slot 1 = 0");
-}
-
-/* -- DOM event code → HID ------------------------------------------------ */
-
-static void test_dom_code_mapping(void) {
-    /* Letters */
-    ASSERT_EQ_INT(0x04, op_input_hid_code_from_dom_code("KeyA"), "KeyA");
-    ASSERT_EQ_INT(0x1D, op_input_hid_code_from_dom_code("KeyZ"), "KeyZ");
-    /* Digits */
-    ASSERT_EQ_INT(0x1E, op_input_hid_code_from_dom_code("Digit1"), "Digit1");
-    ASSERT_EQ_INT(0x27, op_input_hid_code_from_dom_code("Digit0"), "Digit0");
-    /* Modifiers */
-    ASSERT_EQ_INT(0xE0, op_input_hid_code_from_dom_code("ControlLeft"), "ControlLeft");
-    ASSERT_EQ_INT(0xE4, op_input_hid_code_from_dom_code("ControlRight"), "ControlRight");
-    ASSERT_EQ_INT(0xE1, op_input_hid_code_from_dom_code("ShiftLeft"), "ShiftLeft");
-    ASSERT_EQ_INT(0xE3, op_input_hid_code_from_dom_code("MetaLeft"), "MetaLeft");
-    /* Arrows */
-    ASSERT_EQ_INT(0x52, op_input_hid_code_from_dom_code("ArrowUp"), "ArrowUp");
-    /* Punctuation */
-    ASSERT_EQ_INT(0x2D, op_input_hid_code_from_dom_code("Minus"), "Minus");
-    ASSERT_EQ_INT(0x2F, op_input_hid_code_from_dom_code("BracketLeft"), "BracketLeft");
-    /* Numpad */
-    ASSERT_EQ_INT(0x59, op_input_hid_code_from_dom_code("Numpad1"), "Numpad1");
-    /* Unknown / edge cases */
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code("BrowserBack"), "unknown");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code(""), "empty");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code(NULL), "NULL");
 }
 
 /* -- HID code lookup ----------------------------------------------------─ */
@@ -361,6 +334,144 @@ static void test_macro_parser(void) {
     ASSERT_EQ_INT(OP_INPUT_MOD_GUI | OP_INPUT_MOD_SHIFT, tokens[0].modifiers, "GUI|Shift modifiers");
 }
 
+/* -- CH9329 workaround --------------------------------------------------- */
+
+static void test_keyboard_workaround(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* LCtrl + LAlt + 'A' with workaround */
+    int len = op_input_build_keyboard(buf,
+        OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_LALT,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+
+    /* Header */
+    ASSERT_EQ_INT(0x57, buf[0], "header byte 0");
+    ASSERT_EQ_INT(0xAB, buf[1], "header byte 1");
+    ASSERT_EQ_INT(0x02, buf[3], "keyboard command");
+
+    /* Modifier byte: only Ctrl (bit 0), Alt (bit 2) masked out */
+    ASSERT_EQ_INT(0x01, buf[5], "only LCtrl in modifier byte");
+
+    /* Key array: LCtrl (0xE0) + LAlt (0xE2) + 'A' (0x04) */
+    ASSERT_EQ_INT(0xE0, buf[7], "LCtrl HID code");
+    ASSERT_EQ_INT(0xE2, buf[8], "LAlt HID code");
+    ASSERT_EQ_INT(0x04, buf[9], "'A' key");
+    ASSERT_EQ_INT(0x00, buf[10], "slot 4 empty");
+    ASSERT_EQ_INT(0x00, buf[11], "slot 5 empty");
+    ASSERT_EQ_INT(0x00, buf[12], "slot 6 empty");
+}
+
+static void test_keyboard_workaround_right_modifiers(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* RCtrl + RShift + 'A' with workaround — right-side Ctrl/Shift should be preserved */
+    int len = op_input_build_keyboard(buf,
+        OP_INPUT_MOD_RCTRL | OP_INPUT_MOD_RSHIFT,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+
+    /* Modifier byte: RCtrl (bit 4) + RShift (bit 5) = 0x30 */
+    ASSERT_EQ_INT(0x30, buf[5], "RCtrl+RShift preserved in modifier byte");
+
+    /* Key array: RCtrl (0xE4) + RShift (0xE5) + 'A' (0x04) */
+    ASSERT_EQ_INT(0xE4, buf[7], "RCtrl HID code");
+    ASSERT_EQ_INT(0xE5, buf[8], "RShift HID code");
+    ASSERT_EQ_INT(0x04, buf[9], "'A' key");
+}
+
+static void test_keyboard_workaround_only_alt_gui(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* LAlt + LGUI + 'A' — core workaround scenario: modifier byte should be 0 */
+    int len = op_input_build_keyboard(buf,
+        OP_INPUT_MOD_LALT | OP_INPUT_MOD_LGUI,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+
+    /* Modifier byte: Alt/GUI masked out */
+    ASSERT_EQ_INT(0x00, buf[5], "modifier byte = 0 for Alt/GUI only");
+
+    /* Key array: LAlt (0xE2) + LGUI (0xE3) + 'A' (0x04) */
+    ASSERT_EQ_INT(0xE2, buf[7], "LAlt HID code");
+    ASSERT_EQ_INT(0xE3, buf[8], "LGUI HID code");
+    ASSERT_EQ_INT(0x04, buf[9], "'A' key");
+}
+
+static void test_keyboard_workaround_zero_modifiers(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* No modifiers — should behave same as standard mode */
+    int len = op_input_build_keyboard(buf,
+        OP_INPUT_MOD_NONE,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+    ASSERT_EQ_INT(0x00, buf[5], "modifier byte = 0");
+    ASSERT_EQ_INT(0x04, buf[7], "'A' key in slot 1");
+    ASSERT_EQ_INT(0x00, buf[8], "slot 2 empty");
+}
+
+static void test_keyboard_workaround_mixed_modifiers(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* LCtrl + RShift + LAlt + 'A' — mixed left/right modifiers */
+    int len = op_input_build_keyboard(buf,
+        OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_RSHIFT | OP_INPUT_MOD_LALT,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+
+    /* Modifier byte: LCtrl (bit 0) + RShift (bit 5) = 0x21, Alt masked out */
+    ASSERT_EQ_INT(0x21, buf[5], "LCtrl+RShift preserved, Alt masked");
+
+    /* Key array: modifiers in bit order — LCtrl (0xE0) + LAlt (0xE2) + RShift (0xE5) + 'A' (0x04) */
+    ASSERT_EQ_INT(0xE0, buf[7], "LCtrl HID code");
+    ASSERT_EQ_INT(0xE2, buf[8], "LAlt HID code");
+    ASSERT_EQ_INT(0xE5, buf[9], "RShift HID code");
+    ASSERT_EQ_INT(0x04, buf[10], "'A' key");
+}
+
+static void test_keyboard_workaround_modifier_overflow(void) {
+    uint8_t buf[OP_INPUT_PKT_KEYBOARD_SIZE];
+    uint8_t keys[] = { 0x04 }; /* 'A' key */
+
+    /* All 8 modifiers + 'A' — overflow: only 6 slots in key array */
+    uint8_t all_mods = OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_LSHIFT | OP_INPUT_MOD_LALT | OP_INPUT_MOD_LGUI
+                     | OP_INPUT_MOD_RCTRL | OP_INPUT_MOD_RSHIFT | OP_INPUT_MOD_RALT | OP_INPUT_MOD_RGUI;
+    int len = op_input_build_keyboard(buf,
+        all_mods,
+        keys, 1,
+        OP_INPUT_KB_FLAG_CH9329_WORKAROUND);
+
+    ASSERT_EQ_INT(len, OP_INPUT_PKT_KEYBOARD_SIZE, "workaround packet length");
+
+    /* Modifier byte: Ctrl/Shift preserved (0x33), Alt/GUI masked */
+    ASSERT_EQ_INT(0x33, buf[5], "Ctrl/Shift preserved in modifier byte");
+
+    /* Key array: 6 modifier HID codes, 'A' dropped due to overflow */
+    ASSERT_EQ_INT(0xE0, buf[7], "LCtrl HID code");
+    ASSERT_EQ_INT(0xE1, buf[8], "LShift HID code");
+    ASSERT_EQ_INT(0xE2, buf[9], "LAlt HID code");
+    ASSERT_EQ_INT(0xE3, buf[10], "LGUI HID code");
+    ASSERT_EQ_INT(0xE4, buf[11], "RCtrl HID code");
+    ASSERT_EQ_INT(0xE5, buf[12], "RShift HID code");
+    /* RAlt (0xE6), RGUI (0xE7), and 'A' (0x04) are dropped */
+}
+
 /* -- Hex dump ------------------------------------------------------------ */
 
 static void test_hex_dump(void) {
@@ -383,11 +494,16 @@ int main(void) {
     RUN_TEST(test_mouse_packet);
     RUN_TEST(test_mouse_abs_packet);
     RUN_TEST(test_press_release);
-    RUN_TEST(test_dom_code_mapping);
     RUN_TEST(test_hid_codes);
     RUN_TEST(test_char_to_hid);
     RUN_TEST(test_token_parser);
     RUN_TEST(test_macro_parser);
+    RUN_TEST(test_keyboard_workaround);
+    RUN_TEST(test_keyboard_workaround_right_modifiers);
+    RUN_TEST(test_keyboard_workaround_only_alt_gui);
+    RUN_TEST(test_keyboard_workaround_zero_modifiers);
+    RUN_TEST(test_keyboard_workaround_mixed_modifiers);
+    RUN_TEST(test_keyboard_workaround_modifier_overflow);
     RUN_TEST(test_hex_dump);
 
     if (test_failures != 0) {

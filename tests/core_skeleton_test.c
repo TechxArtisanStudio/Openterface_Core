@@ -102,7 +102,7 @@ static void test_input_protocol_wrappers(void) {
     ASSERT_EQ_INT(0x04, op_input_hid_code_from_name("A"), "op input HID from name");
     ASSERT_TRUE(strcmp(op_input_hid_code_label(0x28), "Enter") == 0, "op input HID label");
 
-    len = op_ch9329_build_keyboard_packet(packet, OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_RSHIFT, keys, 2);
+    len = op_ch9329_build_keyboard_packet(packet, OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_RSHIFT, keys, 2, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(OP_CH9329_PKT_KEYBOARD_SIZE, len, "op ch9329 keyboard length");
     ASSERT_EQ_INT(OP_CH9329_HEADER_0, packet[0], "op ch9329 header 0");
     ASSERT_EQ_INT(OP_CH9329_CMD_KEYBOARD, packet[3], "op ch9329 command");

@@ -53,14 +53,57 @@ void op_input_hex_dump(const uint8_t data[], int len, char out[]) {
     out[len * 2] = '\0';
 }
 
+/* HID codes for modifier keys */
+static const uint8_t MOD_HID_CODES[8] = {
+    0xE0, /* LCtrl  bit 0 */
+    0xE1, /* LShift bit 1 */
+    0xE2, /* LAlt   bit 2 */
+    0xE3, /* LGUI   bit 3 */
+    0xE4, /* RCtrl  bit 4 */
+    0xE5, /* RShift bit 5 */
+    0xE6, /* RAlt   bit 6 */
+    0xE7, /* RGUI   bit 7 */
+};
+
 int op_input_build_keyboard(uint8_t out[OP_INPUT_PKT_KEYBOARD_SIZE],
                              uint8_t modifiers,
                              const uint8_t keys[],
-                             int num_keys) {
+                             int num_keys,
+                             uint8_t flags) {
     copy_packet_header(out, KB_HDR);
-    out[5] = modifiers;
-    out[6] = 0x00;
-    write_key_slots(out, keys, num_keys);
+
+    if (flags & OP_INPUT_KB_FLAG_CH9329_WORKAROUND) {
+        /* Workaround: keep Ctrl/Shift in modifier byte (left and right) */
+        out[5] = modifiers & OP_INPUT_MOD_CTRL_SHIFT_MASK;
+        out[6] = 0x00;
+
+        /* Expand all modifiers to HID codes in key array */
+        int idx = 0;
+        for (int bit = 0; bit < 8 && idx < 6; bit++) {
+            if (modifiers & (1 << bit)) {
+                out[7 + idx++] = MOD_HID_CODES[bit];
+            }
+        }
+
+        /* Append normal keys */
+        int key_count = clamped_key_count(num_keys);
+        int remaining_slots = 6 - idx;
+        int copy_count = key_count < remaining_slots ? key_count : remaining_slots;
+        for (int i = 0; i < copy_count; i++) {
+            out[7 + idx++] = keys[i];
+        }
+
+        /* Zero-fill remaining slots */
+        for (; idx < 6; idx++) {
+            out[7 + idx] = 0x00;
+        }
+    } else {
+        /* Standard mode: original behavior */
+        out[5] = modifiers;
+        out[6] = 0x00;
+        write_key_slots(out, keys, num_keys);
+    }
+
     finalize_packet(out, OP_INPUT_PKT_KEYBOARD_SIZE);
     return OP_INPUT_PKT_KEYBOARD_SIZE;
 }
@@ -99,11 +142,12 @@ int op_input_build_mouse_abs(uint8_t out[OP_INPUT_PKT_MOUSE_ABS_SIZE],
 
 int op_input_build_press_release(uint8_t out[2 * OP_INPUT_PKT_KEYBOARD_SIZE],
                                   uint8_t modifiers,
-                                  uint8_t hid_code) {
+                                  uint8_t hid_code,
+                                  uint8_t flags) {
     uint8_t keys[6] = { hid_code, 0, 0, 0, 0, 0 };
     uint8_t zeros[6] = { 0 };
 
-    op_input_build_keyboard(out, modifiers, keys, 1);
-    op_input_build_keyboard(out + OP_INPUT_PKT_KEYBOARD_SIZE, 0x00, zeros, 0);
+    op_input_build_keyboard(out, modifiers, keys, 1, flags);
+    op_input_build_keyboard(out + OP_INPUT_PKT_KEYBOARD_SIZE, 0x00, zeros, 0, flags);
     return 2 * OP_INPUT_PKT_KEYBOARD_SIZE;
 }

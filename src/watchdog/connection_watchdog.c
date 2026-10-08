@@ -30,7 +30,12 @@ struct op_watchdog_t {
     uint32_t recovery_threshold;
     uint32_t max_recovery_attempts;
     uint32_t health_check_interval_ms;
-    uint32_t recovery_delay_ms;
+    uint32_t recovery_delay_ms;  /* DEPRECATED: kept for backward compatibility */
+
+    /* exponential backoff */
+    op_watchdog_backoff_config_t backoff_config;
+    uint32_t backoff_attempt;     /* current backoff level (reset on success) */
+    uint32_t current_backoff_ms; /* cached current delay value */
 
     /* state */
     op_connection_state_t state;
@@ -53,6 +58,30 @@ struct op_watchdog_t {
 };
 
 /* ── helpers ──────────────────────────────────────────────────────── */
+
+static uint32_t op_watchdog_calculate_backoff(const op_watchdog_t *wd) {
+    if (wd == NULL || wd->backoff_config.base_interval_ms == 0) {
+        return wd ? wd->recovery_delay_ms : OP_WD_RECOVERY_DELAY_MS;
+    }
+
+    /* Calculate: base * multiplier^attempt, capped at max */
+    float delay = (float)wd->backoff_config.base_interval_ms;
+    for (uint32_t i = 0; i < wd->backoff_attempt; i++) {
+        delay *= wd->backoff_config.multiplier;
+        if (delay >= (float)wd->backoff_config.max_interval_ms) {
+            return wd->backoff_config.max_interval_ms;
+        }
+    }
+
+    return (uint32_t)delay;
+}
+
+static void op_watchdog_update_backoff_state(op_watchdog_t *wd) {
+    if (wd == NULL) {
+        return;
+    }
+    wd->current_backoff_ms = op_watchdog_calculate_backoff(wd);
+}
 
 static void op_watchdog_set_state(op_watchdog_t *wd, op_connection_state_t new_state, op_status_t error) {
     if (wd == NULL) {
@@ -82,6 +111,8 @@ static void op_watchdog_reset_to_connected(op_watchdog_t *wd) {
     wd->recovery_attempts = 0;
     wd->recovery_phase = OP_WD_RECOV_NONE;
     wd->last_health_check_ms = 0;
+    wd->backoff_attempt = 0;
+    op_watchdog_update_backoff_state(wd);
     op_watchdog_set_state(wd, OP_CONN_STATE_CONNECTED, OP_STATUS_OK);
 }
 
@@ -113,12 +144,44 @@ op_status_t op_watchdog_create(const op_watchdog_config_t *config, op_watchdog_t
     wd->max_recovery_attempts = config->max_recovery_attempts != 0u ? config->max_recovery_attempts : OP_WD_MAX_RECOVERY_ATTEMPTS_DEFAULT;
     wd->health_check_interval_ms = config->health_check_interval_ms != 0u ? config->health_check_interval_ms : OP_WD_HEALTH_CHECK_INTERVAL_MS;
     wd->recovery_delay_ms = config->recovery_delay_ms != 0u ? config->recovery_delay_ms : OP_WD_RECOVERY_DELAY_MS;
+
+    /* Initialize exponential backoff.
+       Priority:
+       1. If backoff is explicitly configured (any field non-zero), use it.
+       2. Else if recovery_delay_ms is set, use it as fixed delay (backward compatibility).
+       3. Else use default backoff configuration. */
+    if (config->backoff.base_interval_ms != 0u ||
+        config->backoff.max_interval_ms != 0u ||
+        config->backoff.multiplier != 0.0f) {
+        /* User explicitly configured backoff */
+        wd->backoff_config.base_interval_ms = config->backoff.base_interval_ms != 0u
+            ? config->backoff.base_interval_ms : OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS;
+        wd->backoff_config.max_interval_ms = config->backoff.max_interval_ms != 0u
+            ? config->backoff.max_interval_ms : OP_WATCHDOG_BACKOFF_DEFAULT_MAX_MS;
+        wd->backoff_config.multiplier = config->backoff.multiplier > 0.0f
+            ? config->backoff.multiplier : OP_WATCHDOG_BACKOFF_DEFAULT_MULTIPLIER;
+    } else if (config->recovery_delay_ms != 0u) {
+        /* Backward compatibility: use recovery_delay_ms as fixed delay */
+        wd->backoff_config.base_interval_ms = config->recovery_delay_ms;
+        wd->backoff_config.max_interval_ms = config->recovery_delay_ms; /* Fixed delay: no increase */
+        wd->backoff_config.multiplier = 1.0f; /* No backoff */
+    } else {
+        /* Default backoff configuration */
+        wd->backoff_config.base_interval_ms = OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS;
+        wd->backoff_config.max_interval_ms = OP_WATCHDOG_BACKOFF_DEFAULT_MAX_MS;
+        wd->backoff_config.multiplier = OP_WATCHDOG_BACKOFF_DEFAULT_MULTIPLIER;
+    }
+    wd->backoff_attempt = 0;
+
     wd->state = OP_CONN_STATE_CONNECTED;
     wd->recovery_phase = OP_WD_RECOV_NONE;
     wd->health_probe = config->health_probe;
     wd->health_probe_context = config->health_probe_context;
     wd->state_cb = config->state_cb;
     wd->state_cb_user_data = config->state_cb_user_data;
+
+    /* Calculate initial backoff value */
+    op_watchdog_update_backoff_state(wd);
 
     *out_watchdog = wd;
     return OP_STATUS_OK;
@@ -161,7 +224,7 @@ void op_watchdog_tick(op_watchdog_t *wd, uint32_t elapsed_ms) {
 
                 case OP_WD_RECOV_WAITING:
                     wd->recovery_timer_ms += elapsed_ms;
-                    if (wd->recovery_timer_ms >= wd->recovery_delay_ms) {
+                    if (wd->recovery_timer_ms >= wd->current_backoff_ms) {
                         wd->recovery_phase = OP_WD_RECOV_OPENING;
                     }
                     break;
@@ -177,22 +240,26 @@ void op_watchdog_tick(op_watchdog_t *wd, uint32_t elapsed_ms) {
                             op_watchdog_reset_to_connected(wd);
                         } else {
                             wd->recovery_attempts++;
+                            wd->backoff_attempt++;
                             wd->state = OP_CONN_STATE_DISCONNECTED;
                             wd->recovery_phase = OP_WD_RECOV_NONE;
                             if (wd->recovery_attempts < wd->max_recovery_attempts) {
                                 wd->state = OP_CONN_STATE_RECOVERING;
                                 wd->recovery_phase = OP_WD_RECOV_WAITING;
                                 wd->recovery_timer_ms = 0;
+                                op_watchdog_update_backoff_state(wd);
                             }
                         }
                     } else {
                         wd->recovery_attempts++;
+                        wd->backoff_attempt++;
                         if (wd->recovery_attempts >= wd->max_recovery_attempts) {
                             wd->state = OP_CONN_STATE_DISCONNECTED;
                             wd->recovery_phase = OP_WD_RECOV_NONE;
                         } else {
                             wd->recovery_phase = OP_WD_RECOV_WAITING;
                             wd->recovery_timer_ms = 0;
+                            op_watchdog_update_backoff_state(wd);
                         }
                     }
                     break;
@@ -249,6 +316,8 @@ void op_watchdog_report_ok(op_watchdog_t *wd) {
 
     wd->consecutive_errors = 0;
     wd->last_health_check_ms = 0;
+    wd->backoff_attempt = 0;
+    op_watchdog_update_backoff_state(wd);
 
     if (wd->state == OP_CONN_STATE_DEGRADED) {
         /* A success while degraded means the link is functional again.
@@ -296,8 +365,10 @@ op_status_t op_watchdog_force_reconnect(op_watchdog_t *watchdog) {
 
     watchdog->consecutive_errors = 0;
     watchdog->recovery_attempts = 0;
+    watchdog->backoff_attempt = 0;
     watchdog->recovery_phase = OP_WD_RECOV_CLOSING;
     watchdog->recovery_timer_ms = 0;
+    op_watchdog_update_backoff_state(watchdog);
 
     if (watchdog->state != OP_CONN_STATE_RECOVERING) {
         op_watchdog_set_state(watchdog, OP_CONN_STATE_RECOVERING, OP_STATUS_OK);
@@ -314,4 +385,56 @@ const char *op_connection_state_label(op_connection_state_t state) {
         case OP_CONN_STATE_DISCONNECTED: return "disconnected";
         default:                        return "unknown";
     }
+}
+
+/* ── Exponential backoff control ────────────────────────────────────── */
+
+op_status_t op_watchdog_configure_backoff(op_watchdog_t *watchdog,
+                                           const op_watchdog_backoff_config_t *config) {
+    if (watchdog == NULL) {
+        return OP_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (config == NULL) {
+        /* Reset to defaults */
+        watchdog->backoff_config.base_interval_ms = OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS;
+        watchdog->backoff_config.max_interval_ms = OP_WATCHDOG_BACKOFF_DEFAULT_MAX_MS;
+        watchdog->backoff_config.multiplier = OP_WATCHDOG_BACKOFF_DEFAULT_MULTIPLIER;
+    } else {
+        if (config->base_interval_ms == 0 || config->max_interval_ms == 0 ||
+            config->multiplier <= 0.0f || config->base_interval_ms > config->max_interval_ms) {
+            return OP_STATUS_INVALID_ARGUMENT;
+        }
+        watchdog->backoff_config = *config;
+    }
+
+    op_watchdog_update_backoff_state(watchdog);
+    return OP_STATUS_OK;
+}
+
+uint32_t op_watchdog_current_backoff_interval(const op_watchdog_t *watchdog) {
+    if (watchdog == NULL) {
+        return 0;
+    }
+    return watchdog->current_backoff_ms;
+}
+
+op_status_t op_watchdog_get_backoff_config(const op_watchdog_t *watchdog,
+                                            op_watchdog_backoff_config_t *out_config) {
+    if (watchdog == NULL) {
+        return OP_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (out_config != NULL) {
+        *out_config = watchdog->backoff_config;
+    }
+    return OP_STATUS_OK;
+}
+
+void op_watchdog_reset_backoff(op_watchdog_t *watchdog) {
+    if (watchdog == NULL) {
+        return;
+    }
+    watchdog->backoff_attempt = 0;
+    op_watchdog_update_backoff_state(watchdog);
 }

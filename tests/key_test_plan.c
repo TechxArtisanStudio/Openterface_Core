@@ -39,7 +39,7 @@ static void test_checksum_known_kb_packet(void) {
 static void test_kb_packet_header(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x57, pkt[0], "header byte 0");
     ASSERT_EQ_INT(0xAB, pkt[1], "header byte 1");
     ASSERT_EQ_INT(0x00, pkt[2], "header byte 2");
@@ -50,7 +50,7 @@ static void test_kb_packet_header(void) {
 static void test_kb_packet_single_key(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0x04, 0, 0, 0, 0, 0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x00, pkt[5], "no modifier");
     ASSERT_EQ_INT(0x04, pkt[7], "key A in slot 1");
     ASSERT_EQ_INT(0x00, pkt[8], "slot 2 empty");
@@ -60,7 +60,7 @@ static void test_kb_packet_single_key(void) {
 static void test_kb_packet_combined_modifiers(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0x04, 0x05, 0, 0, 0, 0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_SHIFT, keys, 2);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_CTRL | OP_INPUT_MOD_SHIFT, keys, 2, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x03, pkt[5], "CTRL|SHIFT = 0x03");
     ASSERT_EQ_INT(0x04, pkt[7], "key A");
     ASSERT_EQ_INT(0x05, pkt[8], "key B");
@@ -72,14 +72,14 @@ static void test_kb_packet_all_modifiers(void) {
     uint8_t keys[6] = {0x04, 0, 0, 0, 0, 0};
     uint8_t all = OP_INPUT_MOD_LCTRL | OP_INPUT_MOD_LSHIFT | OP_INPUT_MOD_LALT | OP_INPUT_MOD_LGUI
                 | OP_INPUT_MOD_RCTRL | OP_INPUT_MOD_RSHIFT | OP_INPUT_MOD_RALT | OP_INPUT_MOD_RGUI;
-    op_input_build_keyboard(pkt, all, keys, 1);
+    op_input_build_keyboard(pkt, all, keys, 1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0xFF, pkt[5], "all modifiers");
 }
 
 static void test_kb_packet_six_keys(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 6);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 6, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x04, pkt[7],  "slot 1");
     ASSERT_EQ_INT(0x05, pkt[8],  "slot 2");
     ASSERT_EQ_INT(0x06, pkt[9],  "slot 3");
@@ -91,15 +91,15 @@ static void test_kb_packet_six_keys(void) {
 static void test_kb_packet_overflow_clamped(void) {
     uint8_t pkt[14];
     uint8_t seven[7] = {0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x09, pkt[12], "slot 6 unchanged (7th key dropped)");
 }
 
 static void test_kb_packet_zero_keys(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0xFF, 0xFF, 0, 0, 0, 0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 2);
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 2, OP_INPUT_KB_FLAG_NONE);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x00, pkt[7],  "slot 1 zeroed");
     ASSERT_EQ_INT(0x00, pkt[12], "slot 6 zeroed");
 }
@@ -107,21 +107,21 @@ static void test_kb_packet_zero_keys(void) {
 static void test_kb_packet_negative_keys(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, -1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, -1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x00, pkt[7], "negative keys treated as 0");
 }
 
 static void test_kb_packet_checksum_filled(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0x04, 0, 0, 0, 0, 0};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 1, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(op_input_checksum(pkt, 14), pkt[13], "checksum auto-filled");
 }
 
 static void test_kb_packet_return_length(void) {
     uint8_t pkt[14];
     uint8_t keys[6] = {0};
-    int len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0);
+    int len = op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, keys, 0, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(OP_INPUT_PKT_KEYBOARD_SIZE, len, "returns 14");
 }
 
@@ -131,7 +131,7 @@ static void test_kb_packet_return_length(void) {
 
 static void test_press_release_basic(void) {
     uint8_t out[28];
-    int len = op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x28);
+    int len = op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x28, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(28, len, "press+release length");
     ASSERT_EQ_INT(0x28, out[7], "press key = Enter");
     ASSERT_EQ_INT(0x00, out[5], "press modifier = NONE");
@@ -142,14 +142,14 @@ static void test_press_release_basic(void) {
 
 static void test_press_release_with_modifier(void) {
     uint8_t out[28];
-    op_input_build_press_release(out, OP_INPUT_MOD_SHIFT, 0x04);
+    op_input_build_press_release(out, OP_INPUT_MOD_SHIFT, 0x04, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(OP_INPUT_MOD_SHIFT, out[5], "press has SHIFT");
     ASSERT_EQ_INT(0x00, out[14 + 5], "release no modifier");
 }
 
 static void test_press_release_both_checksums(void) {
     uint8_t out[28];
-    op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x04);
+    op_input_build_press_release(out, OP_INPUT_MOD_NONE, 0x04, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(op_input_checksum(out, 14), out[13], "press checksum valid");
     ASSERT_EQ_INT(op_input_checksum(out + 14, 14), out[27], "release checksum valid");
 }
@@ -392,121 +392,6 @@ static void test_label_known_keys(void) {
 static void test_label_unknown(void) {
     ASSERT_EQ_STR("Unknown", op_input_hid_code_label(0xFF), "label 0xFF");
     ASSERT_EQ_STR("Unknown", op_input_hid_code_label(0x00), "label 0x00");
-}
-
-/* ============================================================================
- * 7. DOM event.code -> HID Mapping
- * ========================================================================= */
-
-static void test_dom_letters(void) {
-    ASSERT_EQ_INT(0x04, op_input_hid_code_from_dom_code("KeyA"), "KeyA");
-    ASSERT_EQ_INT(0x05, op_input_hid_code_from_dom_code("KeyB"), "KeyB");
-    ASSERT_EQ_INT(0x1D, op_input_hid_code_from_dom_code("KeyZ"), "KeyZ");
-}
-
-static void test_dom_digits(void) {
-    ASSERT_EQ_INT(0x27, op_input_hid_code_from_dom_code("Digit0"), "Digit0");
-    ASSERT_EQ_INT(0x1E, op_input_hid_code_from_dom_code("Digit1"), "Digit1");
-    ASSERT_EQ_INT(0x26, op_input_hid_code_from_dom_code("Digit9"), "Digit9");
-}
-
-static void test_dom_punctuation(void) {
-    ASSERT_EQ_INT(0x2D, op_input_hid_code_from_dom_code("Minus"), "Minus");
-    ASSERT_EQ_INT(0x2E, op_input_hid_code_from_dom_code("Equal"), "Equal");
-    ASSERT_EQ_INT(0x2F, op_input_hid_code_from_dom_code("BracketLeft"), "BracketLeft");
-    ASSERT_EQ_INT(0x30, op_input_hid_code_from_dom_code("BracketRight"), "BracketRight");
-    ASSERT_EQ_INT(0x31, op_input_hid_code_from_dom_code("Backslash"), "Backslash");
-    ASSERT_EQ_INT(0x64, op_input_hid_code_from_dom_code("IntlBackslash"), "IntlBackslash");
-    ASSERT_EQ_INT(0x33, op_input_hid_code_from_dom_code("Semicolon"), "Semicolon");
-    ASSERT_EQ_INT(0x34, op_input_hid_code_from_dom_code("Quote"), "Quote");
-    ASSERT_EQ_INT(0x35, op_input_hid_code_from_dom_code("Backquote"), "Backquote");
-    ASSERT_EQ_INT(0x36, op_input_hid_code_from_dom_code("Comma"), "Comma");
-    ASSERT_EQ_INT(0x37, op_input_hid_code_from_dom_code("Period"), "Period");
-    ASSERT_EQ_INT(0x38, op_input_hid_code_from_dom_code("Slash"), "Slash");
-}
-
-static void test_dom_action_keys(void) {
-    ASSERT_EQ_INT(0x28, op_input_hid_code_from_dom_code("Enter"), "Enter");
-    ASSERT_EQ_INT(0x29, op_input_hid_code_from_dom_code("Escape"), "Escape");
-    ASSERT_EQ_INT(0x2A, op_input_hid_code_from_dom_code("Backspace"), "Backspace");
-    ASSERT_EQ_INT(0x2B, op_input_hid_code_from_dom_code("Tab"), "Tab");
-    ASSERT_EQ_INT(0x2C, op_input_hid_code_from_dom_code("Space"), "Space");
-    ASSERT_EQ_INT(0x39, op_input_hid_code_from_dom_code("CapsLock"), "CapsLock");
-}
-
-static void test_dom_navigation(void) {
-    ASSERT_EQ_INT(0x49, op_input_hid_code_from_dom_code("Insert"), "Insert");
-    ASSERT_EQ_INT(0x4A, op_input_hid_code_from_dom_code("Home"), "Home");
-    ASSERT_EQ_INT(0x4B, op_input_hid_code_from_dom_code("PageUp"), "PageUp");
-    ASSERT_EQ_INT(0x4C, op_input_hid_code_from_dom_code("Delete"), "Delete");
-    ASSERT_EQ_INT(0x4D, op_input_hid_code_from_dom_code("End"), "End");
-    ASSERT_EQ_INT(0x4E, op_input_hid_code_from_dom_code("PageDown"), "PageDown");
-}
-
-static void test_dom_arrows(void) {
-    ASSERT_EQ_INT(0x4F, op_input_hid_code_from_dom_code("ArrowRight"), "ArrowRight");
-    ASSERT_EQ_INT(0x50, op_input_hid_code_from_dom_code("ArrowLeft"), "ArrowLeft");
-    ASSERT_EQ_INT(0x51, op_input_hid_code_from_dom_code("ArrowDown"), "ArrowDown");
-    ASSERT_EQ_INT(0x52, op_input_hid_code_from_dom_code("ArrowUp"), "ArrowUp");
-}
-
-static void test_dom_function_keys(void) {
-    ASSERT_EQ_INT(0x3A, op_input_hid_code_from_dom_code("F1"), "F1");
-    ASSERT_EQ_INT(0x45, op_input_hid_code_from_dom_code("F12"), "F12");
-    ASSERT_EQ_INT(0x46, op_input_hid_code_from_dom_code("PrintScreen"), "PrintScreen");
-    ASSERT_EQ_INT(0x47, op_input_hid_code_from_dom_code("ScrollLock"), "ScrollLock");
-    ASSERT_EQ_INT(0x48, op_input_hid_code_from_dom_code("Pause"), "Pause");
-}
-
-static void test_dom_numpad(void) {
-    ASSERT_EQ_INT(0x53, op_input_hid_code_from_dom_code("NumLock"), "NumLock");
-    ASSERT_EQ_INT(0x54, op_input_hid_code_from_dom_code("NumpadDivide"), "NumpadDivide");
-    ASSERT_EQ_INT(0x55, op_input_hid_code_from_dom_code("NumpadMultiply"), "NumpadMultiply");
-    ASSERT_EQ_INT(0x56, op_input_hid_code_from_dom_code("NumpadSubtract"), "NumpadSubtract");
-    ASSERT_EQ_INT(0x57, op_input_hid_code_from_dom_code("NumpadAdd"), "NumpadAdd");
-    ASSERT_EQ_INT(0x58, op_input_hid_code_from_dom_code("NumpadEnter"), "NumpadEnter");
-    ASSERT_EQ_INT(0x62, op_input_hid_code_from_dom_code("Numpad0"), "Numpad0");
-    ASSERT_EQ_INT(0x61, op_input_hid_code_from_dom_code("Numpad9"), "Numpad9");
-    ASSERT_EQ_INT(0x63, op_input_hid_code_from_dom_code("NumpadDecimal"), "NumpadDecimal");
-    ASSERT_EQ_INT(0x67, op_input_hid_code_from_dom_code("NumpadEqual"), "NumpadEqual");
-}
-
-static void test_dom_left_modifiers(void) {
-    ASSERT_EQ_INT(0xE0, op_input_hid_code_from_dom_code("ControlLeft"), "ControlLeft");
-    ASSERT_EQ_INT(0xE1, op_input_hid_code_from_dom_code("ShiftLeft"), "ShiftLeft");
-    ASSERT_EQ_INT(0xE2, op_input_hid_code_from_dom_code("AltLeft"), "AltLeft");
-    ASSERT_EQ_INT(0xE3, op_input_hid_code_from_dom_code("MetaLeft"), "MetaLeft");
-}
-
-static void test_dom_right_modifiers(void) {
-    ASSERT_EQ_INT(0xE4, op_input_hid_code_from_dom_code("ControlRight"), "ControlRight");
-    ASSERT_EQ_INT(0xE5, op_input_hid_code_from_dom_code("ShiftRight"), "ShiftRight");
-    ASSERT_EQ_INT(0xE6, op_input_hid_code_from_dom_code("AltRight"), "AltRight");
-    ASSERT_EQ_INT(0xE7, op_input_hid_code_from_dom_code("MetaRight"), "MetaRight");
-}
-
-static void test_dom_left_right_differ(void) {
-    int left  = op_input_hid_code_from_dom_code("ControlLeft");
-    int right = op_input_hid_code_from_dom_code("ControlRight");
-    ASSERT_NEQ(left, right, "left != right modifier HID");
-}
-
-static void test_dom_invalid(void) {
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code("BrowserBack"), "unknown DOM code");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code("GamepadButton0"), "unknown gamepad");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code(""), "empty");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code(NULL), "NULL");
-}
-
-static void test_dom_vs_name_consistency(void) {
-    ASSERT_EQ_INT(op_input_hid_code_from_name("A"),
-              op_input_hid_code_from_dom_code("KeyA"), "KeyA consistency");
-    ASSERT_EQ_INT(op_input_hid_code_from_name("Enter"),
-              op_input_hid_code_from_dom_code("Enter"), "Enter consistency");
-    ASSERT_EQ_INT(op_input_hid_code_from_name("F1"),
-              op_input_hid_code_from_dom_code("F1"), "F1 consistency");
-    ASSERT_EQ_INT(op_input_hid_code_from_name("Up"),
-              op_input_hid_code_from_dom_code("ArrowUp"), "ArrowUp/Up consistency");
 }
 
 /* ============================================================================
@@ -941,7 +826,6 @@ static void test_backward_compat_sizes(void) {
 
 static void test_null_safety_all_apis(void) {
     op_input_hid_code_from_name(NULL);
-    op_input_hid_code_from_dom_code(NULL);
     op_input_hid_code_from_char('\n', NULL);
     op_input_parse_token(NULL);
     op_input_macro_parse(NULL, NULL, 0);
@@ -950,7 +834,6 @@ static void test_null_safety_all_apis(void) {
 
 static void test_empty_string_safety(void) {
     ASSERT_EQ_INT(-1, op_input_hid_code_from_name(""), "empty name");
-    ASSERT_EQ_INT(-1, op_input_hid_code_from_dom_code(""), "empty dom code");
     ASSERT_EQ_INT(-1, op_input_parse_token("").hid_code, "empty token");
     ASSERT_EQ_INT(0, op_input_macro_parse("", NULL, 0), "empty macro");
     ASSERT_EQ_INT(0, op_input_script_tokenize("", NULL, 0), "empty tokenize");
@@ -960,12 +843,12 @@ static void test_six_key_rollover_strict(void) {
     uint8_t pkt[14];
     uint8_t six[6] = {0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
     int i;
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, six, 6);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, six, 6, OP_INPUT_KB_FLAG_NONE);
     for (i = 0; i < 6; i++) {
         ASSERT_EQ_INT(six[i], pkt[7 + i], "6-key slot filled");
     }
     uint8_t seven[7] = {0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A};
-    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7);
+    op_input_build_keyboard(pkt, OP_INPUT_MOD_NONE, seven, 7, OP_INPUT_KB_FLAG_NONE);
     ASSERT_EQ_INT(0x09, pkt[12], "slot 6 unchanged after overflow");
 }
 
@@ -1035,21 +918,6 @@ int main(void) {
     printf("\n[6] HID -> Label\n");
     RUN_TEST(test_label_known_keys);
     RUN_TEST(test_label_unknown);
-
-    printf("\n[7] DOM event.code -> HID\n");
-    RUN_TEST(test_dom_letters);
-    RUN_TEST(test_dom_digits);
-    RUN_TEST(test_dom_punctuation);
-    RUN_TEST(test_dom_action_keys);
-    RUN_TEST(test_dom_navigation);
-    RUN_TEST(test_dom_arrows);
-    RUN_TEST(test_dom_function_keys);
-    RUN_TEST(test_dom_numpad);
-    RUN_TEST(test_dom_left_modifiers);
-    RUN_TEST(test_dom_right_modifiers);
-    RUN_TEST(test_dom_left_right_differ);
-    RUN_TEST(test_dom_invalid);
-    RUN_TEST(test_dom_vs_name_consistency);
 
     printf("\n[8] Token Parser\n");
     RUN_TEST(test_token_single_char);

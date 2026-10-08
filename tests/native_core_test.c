@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "openterface/native_entry.h"
+#include "stub/platform_stub.h"
 #include "test_helpers.h"
 
 #define TEST_PROTOCOL_CH9329 (1u << 0)
@@ -509,7 +510,7 @@ static void test_native_serial_transport_backend(void) {
     device.capabilities = (op_capability_flags_t)OP_CAPABILITY_USB_ROLE_SWITCH;
     device.default_baudrate = 115200u;
 
-    ASSERT_TRUE(strcmp(op_core_native_serial_backend_name(&device), "stub") == 0, "stub serial backend selected by device path");
+    ASSERT_TRUE(strcmp(op_core_native_serial_backend_name(&device), "platform") == 0, "serial backend registered");
     ASSERT_EQ_INT(OP_STATUS_OK, op_native_transport_init_serial(&transport, &device), "init native serial transport");
     ASSERT_EQ_INT(OP_STATUS_OK, op_transport_open(&transport), "open native serial transport");
 
@@ -528,6 +529,15 @@ static void test_native_serial_transport_backend(void) {
 }
 
 int main(void) {
+    /* Register stub backend for testing */
+    static op_platform_backends_t backends = {
+        .hid_backend = NULL,
+        .serial_backend = NULL
+    };
+    backends.hid_backend = op_platform_get_stub_hid_backend();
+    backends.serial_backend = op_platform_get_stub_serial_backend();
+    op_core_register_platform_backends(&backends);
+
     printf("Running native_core tests...\n");
 
     RUN_TEST(test_device_helpers);

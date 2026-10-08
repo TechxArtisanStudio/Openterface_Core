@@ -41,6 +41,19 @@ typedef op_status_t (*op_health_probe_fn_t)(void *context);
 
 /* ── Configuration ────────────────────────────────────────────────── */
 
+/* ── Exponential backoff configuration ───────────────────────────── */
+
+typedef struct {
+    uint32_t base_interval_ms;     /* Base delay (e.g., 1000ms) */
+    uint32_t max_interval_ms;      /* Maximum delay cap (e.g., 30000ms) */
+    float    multiplier;           /* Backoff factor (e.g., 2.0) */
+} op_watchdog_backoff_config_t;
+
+/* Default backoff: 1s base, 30s max, 2x multiplier */
+#define OP_WATCHDOG_BACKOFF_DEFAULT_BASE_MS    1000u
+#define OP_WATCHDOG_BACKOFF_DEFAULT_MAX_MS     30000u
+#define OP_WATCHDOG_BACKOFF_DEFAULT_MULTIPLIER 2.0f
+
 typedef struct {
     op_transport_t *transport;          /* transport to monitor */
 
@@ -51,7 +64,10 @@ typedef struct {
 
     /* Timing (milliseconds) */
     uint32_t health_check_interval_ms;  /* interval between health probes (default: 5000) */
-    uint32_t recovery_delay_ms;         /* wait between close and reopen during recovery (default: 1000) */
+    uint32_t recovery_delay_ms;         /* DEPRECATED: use backoff.base_interval_ms instead */
+
+    /* Exponential backoff for recovery delays (optional, overrides recovery_delay_ms) */
+    op_watchdog_backoff_config_t backoff;
 
     /* Callbacks */
     op_connection_state_cb_t state_cb;  /* called on every state transition */
@@ -100,6 +116,26 @@ uint32_t op_watchdog_recovery_attempts(const op_watchdog_t *watchdog);
 /* Force a reconnection attempt regardless of current state.
    Useful when the app detects the device came back (e.g. hotplug event). */
 op_status_t op_watchdog_force_reconnect(op_watchdog_t *watchdog);
+
+/* ── Exponential backoff control ────────────────────────────────────── */
+
+/* Reconfigure backoff parameters at runtime.
+   Pass NULL to reset to defaults. */
+op_status_t op_watchdog_configure_backoff(op_watchdog_t *watchdog,
+                                           const op_watchdog_backoff_config_t *config);
+
+/* Get the current backoff delay that will be used for the next recovery attempt.
+   Returns 0 if backoff is not active or watchdog is NULL. */
+uint32_t op_watchdog_current_backoff_interval(const op_watchdog_t *watchdog);
+
+/* Retrieve the current backoff configuration.
+   Pass NULL for out_config to query without copying. */
+op_status_t op_watchdog_get_backoff_config(const op_watchdog_t *watchdog,
+                                            op_watchdog_backoff_config_t *out_config);
+
+/* Reset the backoff counter to zero.
+   Call this when the connection is fully restored or when manually resetting state. */
+void op_watchdog_reset_backoff(op_watchdog_t *watchdog);
 
 const char *op_connection_state_label(op_connection_state_t state);
 

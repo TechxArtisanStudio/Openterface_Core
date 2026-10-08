@@ -26,6 +26,19 @@ extern "C" {
 #define OP_INPUT_MOD_ALT    OP_INPUT_MOD_LALT
 #define OP_INPUT_MOD_GUI    OP_INPUT_MOD_LGUI
 
+/* ── Keyboard builder flags ─────────────────────────────────────────────── */
+
+/** Standard mode: modifiers go directly into the modifier byte. */
+#define OP_INPUT_KB_FLAG_NONE       0x00
+
+/** CH9329 workaround: keep only Ctrl/Shift in modifier byte,
+ *  expand all modifiers to HID codes (0xE0-0xE7) in key array. */
+#define OP_INPUT_KB_FLAG_CH9329_WORKAROUND  0x01
+
+/** Modifier mask for Ctrl/Shift bits (left and right) in modifier byte.
+ *  Used by CH9329 workaround to preserve reliable modifiers. */
+#define OP_INPUT_MOD_CTRL_SHIFT_MASK  0x33  /* LCtrl|LShift|RCtrl|RShift */
+
 /* ── CH9329 command codes ───────────────────────────────────────────────── */
 
 #define OP_INPUT_CMD_KB       0x02
@@ -61,9 +74,6 @@ typedef struct {
 
 /* ── HID lookup API ─────────────────────────────────────────────────────── */
 
-/** Map a DOM event.code string to a HID usage code. */
-int op_input_hid_code_from_dom_code(const char *dom_code);
-
 /** Look up a HID usage code by key name (e.g. "Enter", "A", "F1"). */
 int op_input_hid_code_from_name(const char *key_name);
 
@@ -86,11 +96,14 @@ int op_input_script_tokenize(const char *input, op_input_script_token_span_t out
 
 /* ── Packet building API ────────────────────────────────────────────────── */
 
-/** Build a CH9329 keyboard packet. */
+/** Build a CH9329 keyboard packet.
+ *  @param flags  OP_INPUT_KB_FLAG_NONE or OP_INPUT_KB_FLAG_CH9329_WORKAROUND
+ */
 int op_input_build_keyboard(uint8_t out[OP_INPUT_PKT_KEYBOARD_SIZE],
                              uint8_t modifiers,
                              const uint8_t keys[],
-                             int num_keys);
+                             int num_keys,
+                             uint8_t flags);
 
 /** Build a CH9329 relative-mouse packet. */
 int op_input_build_mouse_rel(uint8_t out[OP_INPUT_PKT_MOUSE_REL_SIZE],
@@ -109,7 +122,8 @@ int op_input_build_mouse_abs(uint8_t out[OP_INPUT_PKT_MOUSE_ABS_SIZE],
 /** Build a press+release keyboard sequence (two packets consecutively). */
 int op_input_build_press_release(uint8_t out[2 * OP_INPUT_PKT_KEYBOARD_SIZE],
                                   uint8_t modifiers,
-                                  uint8_t hid_code);
+                                  uint8_t hid_code,
+                                  uint8_t flags);
 
 /* ── Utility API ────────────────────────────────────────────────────────── */
 

@@ -1,17 +1,8 @@
 #include "hid_internal.h"
+#include "openterface/native_entry.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-static int op_hid_device_should_use_stub_backend(const op_device_info_t *device) {
-    static const char prefix[] = "stub:";
-
-    if (device == NULL) {
-        return 0;
-    }
-
-    return strncmp(device->hid_path, prefix, sizeof(prefix) - 1u) == 0;
-}
 
 op_status_t op_hid_device_session_create(const op_device_info_t *device, op_hid_device_session_t **out_session) {
     op_hid_device_session_t *session;
@@ -26,9 +17,10 @@ op_status_t op_hid_device_session_create(const op_device_info_t *device, op_hid_
     }
 
     memcpy(&session->device, device, sizeof(*device));
-    session->backend = op_hid_device_should_use_stub_backend(device)
-        ? op_platform_get_stub_hid_backend()
-        : op_platform_get_hid_backend();
+
+    /* Use the registered backend - frontend is responsible for registering
+     * the appropriate backend (real or stub) at initialization time. */
+    session->backend = op_core_get_hid_backend();
     if (session->backend == NULL || session->backend->create_context == NULL) {
         free(session);
         return OP_STATUS_UNINITIALIZED;
