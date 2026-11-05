@@ -6,6 +6,8 @@
 static const uint8_t KB_HDR[]     = { 0x57, 0xAB, 0x00, OP_INPUT_CMD_KB,     0x08 };
 static const uint8_t MS_HDR[]     = { 0x57, 0xAB, 0x00, OP_INPUT_CMD_MS_REL, 0x05 };
 static const uint8_t MS_ABS_HDR[] = { 0x57, 0xAB, 0x00, OP_INPUT_CMD_MS_ABS, 0x07 };
+static const uint8_t MEDIA_HDR[]  = { 0x57, 0xAB, 0x00, OP_INPUT_CMD_KB_MEDIA, 0x04 };
+static const uint8_t APPLE_FN_HDR[] = { 0x57, 0xAB, 0x00, OP_INPUT_CMD_KB_MEDIA, 0x02 };
 
 /* Mouse mode byte (byte 5 after 5-byte header) */
 enum {
@@ -150,4 +152,25 @@ int op_input_build_press_release(uint8_t out[2 * OP_INPUT_PKT_KEYBOARD_SIZE],
     op_input_build_keyboard(out, modifiers, keys, 1, flags);
     op_input_build_keyboard(out + OP_INPUT_PKT_KEYBOARD_SIZE, 0x00, zeros, 0, flags);
     return 2 * OP_INPUT_PKT_KEYBOARD_SIZE;
+}
+
+int op_input_build_media(uint8_t out[OP_INPUT_PKT_MEDIA_SIZE],
+                          uint8_t report_id,
+                          const uint8_t bitmap[3]) {
+    copy_packet_header(out, MEDIA_HDR);
+    out[5] = report_id;
+    out[6] = bitmap[0];
+    out[7] = bitmap[1];
+    out[8] = bitmap[2];
+    finalize_packet(out, OP_INPUT_PKT_MEDIA_SIZE);
+    return OP_INPUT_PKT_MEDIA_SIZE;
+}
+
+int op_input_build_apple_fn(uint8_t out[OP_INPUT_PKT_APPLE_FN_SIZE],
+                             uint8_t bitmap) {
+    copy_packet_header(out, APPLE_FN_HDR);
+    out[5] = 0x03;  /* Report ID for Apple function row */
+    out[6] = bitmap;
+    finalize_packet(out, OP_INPUT_PKT_APPLE_FN_SIZE);
+    return OP_INPUT_PKT_APPLE_FN_SIZE;
 }

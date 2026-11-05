@@ -118,7 +118,7 @@ const name_entry_t hid_name_map[] = {
     { "8", 0x25 }, { "9", 0x26 },
     { "Enter", 0x28 }, { "Escape", 0x29 }, { "Backspace", 0x2A },
     { "Tab", 0x2B }, { "Space", 0x2C }, { "Caps", 0x39 },
-    { "Delete", 0x4C }, { "Insert", 0x49 }, { "Home", 0x4A },
+    { "Delete", 0x4C }, { "ForwardDelete", 0x4C }, { "Insert", 0x49 }, { "Home", 0x4A },
     { "End", 0x4D }, { "PageUp", 0x4B }, { "PageDown", 0x4E },
     { "PgUp", 0x4B }, { "PgDn", 0x4E },
     { "Right", 0x4F }, { "Left", 0x50 }, { "Down", 0x51 }, { "Up", 0x52 },
@@ -132,7 +132,13 @@ const name_entry_t hid_name_map[] = {
     { "NumpadAsterisk", 0x55 }, { "NumpadMinus", 0x56 }, { "NumpadPlus", 0x57 },
     { "NumpadEnter", 0x58 }, { "NumpadEquals", 0x67 }, { "NumLock", 0x53 },
     { "Ctrl", 0xE0 }, { "Shift", 0xE1 }, { "Alt", 0xE2 }, { "Cmd", 0xE3 }, { "Win", 0xE3 },
-    { "App", 0x65 }, { "ScrollLock", 0x47 }, { "PrtSc", 0x46 }, { "Pause", 0x48 },
+    { "Fn", 0x6A }, { "Power", 0x66 }, { "App", 0x65 }, { "Menu", 0x65 }, { "ScrollLock", 0x47 }, { "PrtSc", 0x46 }, { "Pause", 0x48 },
+    { "Backslash", 0x31 }, { "IntlBackslash", 0x64 },
+    // DOM-style key names for international layouts
+    { "Minus", 0x2D }, { "Equal", 0x2E },
+    { "BracketLeft", 0x2F }, { "BracketRight", 0x30 },
+    { "Semicolon", 0x33 }, { "Quote", 0x34 }, { "Backquote", 0x35 },
+    { "Comma", 0x36 }, { "Period", 0x37 }, { "Slash", 0x38 },
 };
 
 const int hid_name_map_len = sizeof(hid_name_map) / sizeof(hid_name_map[0]);

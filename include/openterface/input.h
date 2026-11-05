@@ -44,12 +44,15 @@ extern "C" {
 #define OP_INPUT_CMD_KB       0x02
 #define OP_INPUT_CMD_MS_REL   0x05
 #define OP_INPUT_CMD_MS_ABS   0x04
+#define OP_INPUT_CMD_KB_MEDIA 0x03
 
 /* ── Packet size constants ──────────────────────────────────────────────── */
 
 #define OP_INPUT_PKT_KEYBOARD_SIZE  14  /* 5 header + 8 data + 1 checksum */
 #define OP_INPUT_PKT_MOUSE_REL_SIZE 11  /* 5 header + 5 data + 1 checksum */
 #define OP_INPUT_PKT_MOUSE_ABS_SIZE 13  /* 5 header + 7 data + 1 checksum */
+#define OP_INPUT_PKT_MEDIA_SIZE     10  /* 5 header + 4 data + 1 checksum */
+#define OP_INPUT_PKT_APPLE_FN_SIZE   8  /* 5 header + 2 data + 1 checksum */
 
 /* ── Mouse button mask ──────────────────────────────────────────────────── */
 
@@ -124,6 +127,24 @@ int op_input_build_press_release(uint8_t out[2 * OP_INPUT_PKT_KEYBOARD_SIZE],
                                   uint8_t modifiers,
                                   uint8_t hid_code,
                                   uint8_t flags);
+
+/** Build a CH9329 media/consumer key packet (CMD=0x03).
+ *  report_id: 0x01=ACPI, 0x02=Consumer Control
+ *  bitmap: 3-byte media key bitmap (for report_id=0x02)
+ */
+int op_input_build_media(uint8_t out[OP_INPUT_PKT_MEDIA_SIZE],
+                          uint8_t report_id,
+                          const uint8_t bitmap[3]);
+
+/** Build a CH9329 Apple function row packet (CMD=0x03, Report ID 0x03).
+ *  bitmap: 8-bit bitmap for F1-F4 Apple-specific functions
+ *    bit0: F1 Display Brightness Decrement (0x0070)
+ *    bit1: F2 Display Brightness Increment (0x006F)
+ *    bit2: F3 Mission Control (0x029F)
+ *    bit3: F4 Launchpad (0x02A2)
+ */
+int op_input_build_apple_fn(uint8_t out[OP_INPUT_PKT_APPLE_FN_SIZE],
+                             uint8_t bitmap);
 
 /* ── Utility API ────────────────────────────────────────────────────────── */
 
