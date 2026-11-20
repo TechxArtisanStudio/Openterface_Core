@@ -201,6 +201,19 @@ static void test_char_shifted_symbols(void) {
     ASSERT_EQ_INT(1, shift, "'@' needs shift");
     ASSERT_EQ_INT(0x20, op_input_hid_code_from_char('#', &shift), "'#' HID");
     ASSERT_EQ_INT(1, shift, "'#' needs shift");
+    ASSERT_EQ_INT(0x21, op_input_hid_code_from_char('$', &shift), "'$' HID");
+    ASSERT_EQ_INT(1, shift, "'$' needs shift");
+    ASSERT_EQ_INT(0x22, op_input_hid_code_from_char('%', &shift), "'%' HID");
+    ASSERT_EQ_INT(1, shift, "'%' needs shift");
+    ASSERT_EQ_INT(0x23, op_input_hid_code_from_char('^', &shift), "'^' HID");
+    ASSERT_EQ_INT(1, shift, "'^' needs shift");
+    /* '&' shares the row but not the key: it is 7, never the '^' key at 0x23. */
+    ASSERT_EQ_INT(0x24, op_input_hid_code_from_char('&', &shift), "'&' HID");
+    ASSERT_EQ_INT(1, shift, "'&' needs shift");
+    ASSERT_EQ_INT(0x26, op_input_hid_code_from_char('(', &shift), "'(' HID");
+    ASSERT_EQ_INT(1, shift, "'(' needs shift");
+    ASSERT_EQ_INT(0x27, op_input_hid_code_from_char(')', &shift), "')' HID");
+    ASSERT_EQ_INT(1, shift, "')' needs shift");
     ASSERT_EQ_INT(0x25, op_input_hid_code_from_char('*', &shift), "'*' HID");
     ASSERT_EQ_INT(1, shift, "'*' needs shift");
 }
@@ -255,8 +268,12 @@ static void test_char_special_keys(void) {
     ASSERT_EQ_INT(0, shift, "'`' no shift");
     ASSERT_EQ_INT(0x34, op_input_hid_code_from_char('\'', &shift), "'\\'' HID");
     ASSERT_EQ_INT(0, shift, "'\\'' no shift");
-    ASSERT_EQ_INT(0x64, op_input_hid_code_from_char('\\', &shift), "'\\\\' HID");
+    /* ANSI backslash at 0x31, never the ISO 102nd key at 0x64: a US target has
+       no ISO key, so the character would go missing or turn into a dead key. */
+    ASSERT_EQ_INT(0x31, op_input_hid_code_from_char('\\', &shift), "'\\\\' HID");
     ASSERT_EQ_INT(0, shift, "'\\\\' no shift");
+    ASSERT_EQ_INT(0x31, op_input_hid_code_from_char('|', &shift), "'|' HID");
+    ASSERT_EQ_INT(1, shift, "'|' needs shift");
 }
 
 static void test_char_boundary(void) {

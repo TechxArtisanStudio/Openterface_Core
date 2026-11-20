@@ -80,7 +80,16 @@ typedef struct {
 /** Look up a HID usage code by key name (e.g. "Enter", "A", "F1"). */
 int op_input_hid_code_from_name(const char *key_name);
 
-/** Map a printable ASCII character to its HID usage code. */
+/**
+ * Map a printable ASCII character to its HID usage code.
+ *
+ * The mapping is positional and follows the US layout, so every character
+ * resolves to the ANSI key that carries it there: the backslash character is
+ * 0x31 (Keyboard Backslash) and never 0x64 (Keyboard Non-US Backslash, the
+ * ISO 102nd key). A target with another layout still receives these usages
+ * and applies its own layout, and callers that want the ISO key look it up by
+ * name instead ("IntlBackslash"). Characters outside 0x20 to 0x7E return -1.
+ */
 int op_input_hid_code_from_char(char c, int *out_needs_shift);
 
 /** Convert a HID usage code to a human-readable label. */
